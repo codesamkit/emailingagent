@@ -1,0 +1,15 @@
+# Ingestion + calendar (Track A)
+google-api-python-client>=2.100.0
+google-auth-oauthlib>=1.1.0
+google-auth-httplib2>=0.1.1
+
+# Classification / scoring / summarization / drafting (Tracks B and C)
+anthropic>=0.125.0
+
+# API layer
+fastapi>=0.128.0
+uvicorn[standard]>=0.39.0
+
+# Tests
+pytest>=7.4.0
+httpx>=0.27.0          # required by fastapi.testclient

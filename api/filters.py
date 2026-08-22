@@ -1,0 +1,89 @@
+"""Server-side filtering and sorting for the review list.
+
+Lives on the server rather than in the frontend so the CLI, the web UI, and
+any future client apply identical rules — and so a large inbox does not have
+to be shipped to the browser just to be filtered.
+"""
+
+from __future__ import annotations
+
+from typing import List, Optional
+
+from models.schema import ImportanceLevel, ProcessedEmail, ReadStatus
+
+SORT_FIELDS = ("importance", "received", "sender")
+
+
+def apply_filters(
+    emails: List[ProcessedEmail],
+    read_status: Optional[str] = None,
+    importance: Optional[str] = None,
+    no_reply: Optional[bool] = None,
+    scheduling: Optional[bool] = None,
+    has_outline: Optional[bool] = None,
+    search: Optional[str] = None,
+) -> List[ProcessedEmail]:
+    """Filter the review list. Every argument is optional and ANDed together.
+
+    `None` means "don't filter on this", which is deliberately distinct from
+    `False` — `no_reply=False` means "only emails known NOT to be no-reply",
+    and excludes unclassified ones whose flag is still None.
+    """
+    result = emails
+
+    if read_status:
+        wanted = ReadStatus(read_status)
+        result = [e for e in result if e.read_status == wanted]
+
+    if importance:
+        wanted_level = ImportanceLevel(importance)
+        result = [e for e in result if e.importance_level == wanted_level]
+
+    if no_reply is not None:
+        result = [e for e in result if e.is_no_reply is no_reply]
+
+    if scheduling is not None:
+        result = [e for e in result if bool(e.is_scheduling_related) is scheduling]
+
+    if has_outline is not None:
+        result = [e for e in result if bool(e.reply_outline) is has_outline]
+
+    if search:
+        needle = search.lower().strip()
+        result = [
+            e
+            for e in result
+            if needle in (e.subject or "").lower()
+            or needle in (e.sender or "").lower()
+            or needle in (e.summary or "").lower()
+        ]
+
+    return result
+
+
+def sort_emails(
+    emails: List[ProcessedEmail],
+    sort_by: str = "importance",
+    descending: bool = True,
+) -> List[ProcessedEmail]:
+    """Sort the review list. Unscored emails always sort last.
+
+    Unscored last regardless of direction: an email with no score yet is not
+    "the least important", it is "not yet known", and either end of the list
+    is a worse place for it than the bottom.
+    """
+    if sort_by not in SORT_FIELDS:
+        raise ValueError(
+            "sort_by must be one of {0}, got {1!r}".format(SORT_FIELDS, sort_by)
+        )
+
+    if sort_by == "importance":
+        scored = [e for e in emails if e.importance_score is not None]
+        unscored = [e for e in emails if e.importance_score is None]
+        scored.sort(key=lambda e: e.importance_score, reverse=descending)
+        return scored + unscored
+
+    if sort_by == "received":
+        return sorted(emails, key=lambda e: e.received_at, reverse=descending)
+
+    return sorted(emails, key=lambda e: (e.sender or "").lower(), reverse=descending)
