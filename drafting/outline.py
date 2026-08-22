@@ -1,67 +1,50 @@
 """Reply-outline generation (Track C / drafting).
 
-Two entry points:
-  - generate_reply_outline: matches the frozen interfaces/README.md
-    signature. Assumes the caller has already checked eligibility - it
-    will happily call the LLM for any input it's given.
-  - process_email_for_outline: the actual code-level gate. This is what
-    the pipeline (and read-status-change handlers) should call - it
-    decides eligibility BEFORE generate_reply_outline (and therefore
-    before any LLM call) ever runs, per PHASES.md item 1.
+generate_reply_outline is the single entry point the frozen interface
+contract (interfaces/README.md) specifies: it performs the read/no-reply
+gate BEFORE any LLM call (per PHASES.md item 1) and returns the outline
+plus its status rather than mutating its arguments, so callers (the
+Phase 6 pipeline, read-status-change handlers, tests) decide what to do
+with the result. Safe to call repeatedly - e.g. once at ingestion time
+and again whenever read_status flips to READ, which is how regeneration
+works (no separate "regenerate" function needed).
 """
 
 from __future__ import annotations
 
 import os
-from typing import Optional
 
-from models.schema import CalendarContext, ProcessedEmail, ReadStatus, ReplyOutlineStatus
+from models.schema import ProcessedEmail, RawEmail, ReadStatus, ReplyOutlineStatus
 
 from .calendar_aware import fold_calendar_slots_into_outline
 
 _ANTHROPIC_MODEL = "claude-sonnet-5"
 
 
-def process_email_for_outline(processed: ProcessedEmail) -> ProcessedEmail:
-    """Apply the read/no-reply gate, then generate (or clear) reply_outline
-    in place on `processed`. Safe to call repeatedly - e.g. once at
-    ingestion time and again whenever read_status flips to READ, which is
-    how regeneration works (no separate "regenerate" function needed).
+def generate_reply_outline(
+    processed: ProcessedEmail,
+    raw: RawEmail,
+) -> tuple[list[str] | None, ReplyOutlineStatus]:
+    """Apply the read/no-reply gate, then generate a short bullet-point
+    reply outline (not a full email) for an eligible email.
     """
     if processed.is_no_reply:
         # No-reply always wins, even if the email is manually marked read.
-        processed.reply_outline = None
-        processed.reply_outline_status = ReplyOutlineStatus.NOT_APPLICABLE
-        return processed
+        return None, ReplyOutlineStatus.NOT_APPLICABLE
 
     if processed.read_status != ReadStatus.READ:
-        processed.reply_outline = None
-        processed.reply_outline_status = ReplyOutlineStatus.NONE
-        return processed
+        return None, ReplyOutlineStatus.NONE
 
-    processed.reply_outline = generate_reply_outline(processed, processed.calendar_context)
-    processed.reply_outline_status = ReplyOutlineStatus.SUGGESTED
-    return processed
-
-
-def generate_reply_outline(
-    processed: ProcessedEmail,
-    calendar_context: Optional[CalendarContext],
-) -> list[str]:
-    """Generate a short bullet-point reply outline (not a full email) for
-    an already-eligible email. Caller is responsible for the read/no-reply
-    gate - see process_email_for_outline.
-    """
-    prompt = _build_prompt(processed)
+    prompt = _build_prompt(processed, raw)
     outline = _call_llm(prompt)
 
-    if processed.is_scheduling_related and calendar_context is not None:
-        outline = fold_calendar_slots_into_outline(outline, calendar_context)
+    if processed.is_scheduling_related and processed.calendar_context is not None:
+        outline = fold_calendar_slots_into_outline(outline, processed.calendar_context)
 
-    return outline
+    return outline, ReplyOutlineStatus.SUGGESTED
 
 
-def _build_prompt(processed: ProcessedEmail) -> str:
+def _build_prompt(processed: ProcessedEmail, raw: RawEmail) -> str:
     return (
         "Draft a short bullet-point outline (not a full email) for replying "
         "to this email. Each bullet should be a brief skeleton point, not "
@@ -69,6 +52,7 @@ def _build_prompt(processed: ProcessedEmail) -> str:
         f"From: {processed.sender}\n"
         f"Subject: {processed.subject}\n"
         f"Summary: {processed.summary or '(no summary available)'}\n"
+        f"Body:\n{raw.body}\n"
     )
 
 
