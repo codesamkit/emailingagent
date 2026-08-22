@@ -19,6 +19,7 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import Body, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 
 from models.schema import ReplyOutlineStatus
 from pipeline import persist
@@ -57,6 +58,15 @@ app.add_middleware(
 
 # Overridden by tests to point at a temporary database.
 DB_PATH: Optional[Path] = None
+
+STATIC_DIR = Path(__file__).parent / "static"
+
+
+@app.get("/", include_in_schema=False)
+def index() -> FileResponse:
+    """The review UI — a single self-contained page, so `uvicorn
+    api.main:app` is the entire web MVP with no frontend build step."""
+    return FileResponse(STATIC_DIR / "index.html")
 
 
 @app.get("/api/health")

@@ -209,12 +209,36 @@ class TestEditOutline:
         assert client.patch("/api/emails/nope/outline", json={"outline": ["x"]}).status_code == 404
 
 
+class TestIndexPage:
+    def test_root_serves_the_review_ui(self, client):
+        response = client.get("/")
+        assert response.status_code == 200
+        assert "text/html" in response.headers["content-type"]
+        assert "MailDesk" in response.text or "Mail Desk" in response.text
+
+
 class TestExpandDraft:
-    def test_returns_501_until_implemented(self, client):
-        """A real contract with an honest status, not placeholder prose."""
+    def test_expands_outline_into_a_draft(self, client, monkeypatch):
+        """Returns prose for the user to review — nothing is sent."""
+        import json as _json
+
+        from drafting import expand as expand_module
+
+        class _Block:
+            type = "text"
+            text = _json.dumps({"draft": "Hi,\n\nConfirmed.\n\nBest,"})
+
+        class _Fake:
+            class messages:
+                @staticmethod
+                def create(**kwargs):
+                    return type("R", (), {"content": [_Block()]})()
+
+        monkeypatch.setattr(expand_module, "_get_default_client", lambda: _Fake())
+
         response = client.post("/api/emails/read-eligible/expand")
-        assert response.status_code == 501
-        assert "not implemented yet" in response.json()["detail"]
+        assert response.status_code == 200
+        assert response.json()["draft"].startswith("Hi,")
 
     def test_email_without_outline_is_409(self, client):
         assert client.post("/api/emails/unread/expand").status_code == 409

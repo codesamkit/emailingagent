@@ -290,10 +290,38 @@ class TestIsEligible:
         assert (record.read_status, record.is_no_reply, record.reply_outline_status) == before
 
 
-class TestExpandStub:
-    def test_raises_rather_than_returning_placeholder_text(self):
+class ExpandFakeClient:
+    """Records calls and returns a canned draft (expand's response schema)."""
+
+    def __init__(self, draft: str = "Hi,\n\nConfirmed for Friday.\n\nBest,"):
+        self.draft = draft
+        self.calls = []
+        self.messages = self
+
+    def create(self, **kwargs):
+        self.calls.append(kwargs)
+        return _Response(json.dumps({"draft": self.draft}))
+
+
+class TestExpand:
+    def test_expands_outline_into_prose_via_llm(self):
+        from drafting.expand import expand_outline_to_full_draft
+
+        fake = ExpandFakeClient()
+        draft = expand_outline_to_full_draft(
+            "e1", ["Confirm the Friday deadline", "Ask for the dataset"], client=fake
+        )
+
+        assert draft == fake.draft
+        sent = fake.calls[0]["messages"][0]["content"]
+        assert "Confirm the Friday deadline" in sent
+        assert "Ask for the dataset" in sent
+
+    def test_id_only_call_raises_rather_than_returning_placeholder_text(self):
+        """Resolving the outline from storage by id alone is still deferred;
+        an honest error beats placeholder prose."""
         from drafting.expand import NotYetImplementedError, expand_outline_to_full_draft
 
         with pytest.raises(NotYetImplementedError) as exc:
-            expand_outline_to_full_draft("e1", ["a bullet"])
+            expand_outline_to_full_draft("e1")
         assert "not implemented yet" in str(exc.value)

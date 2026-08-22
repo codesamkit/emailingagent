@@ -1,0 +1,431 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mail Desk — inbox review</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --paper: #FAF7F1;
+    --card: #FFFFFF;
+    --ink: #1C2733;
+    --ink-soft: #5C6A79;
+    --ink-faint: #93A0AE;
+    --manila: #EFE6D2;
+    --manila-deep: #C9B68C;
+    --rule: #E6DFD2;
+    --postmark: #C03B2B;   /* urgent only */
+    --meter-blue: #2F5D8C; /* interactive + high */
+    --ok: #3E7A4E;
+    --sans: "Archivo", -apple-system, "Segoe UI", system-ui, sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: var(--sans);
+    background: var(--paper);
+    color: var(--ink);
+    font-size: 15px;
+    line-height: 1.45;
+  }
+  button { font: inherit; cursor: pointer; }
+  :focus-visible { outline: 2px solid var(--meter-blue); outline-offset: 2px; }
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; animation: none !important; }
+  }
+
+  /* ---------- header ---------- */
+  header {
+    border-bottom: 2px solid var(--ink);
+    background: var(--paper);
+    padding: 14px 20px 0;
+  }
+  .masthead { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+  .masthead h1 {
+    font-weight: 800; font-size: 20px; letter-spacing: -0.02em; text-transform: uppercase;
+  }
+  .masthead h1 .desk { color: var(--meter-blue); }
+  .processed-note { font-family: var(--mono); font-size: 12px; color: var(--ink-soft); }
+  .masthead .spacer { flex: 1; }
+  .search {
+    font-family: var(--mono); font-size: 13px;
+    border: 1px solid var(--manila-deep); border-radius: 3px;
+    background: var(--card); color: var(--ink);
+    padding: 6px 10px; width: 240px; max-width: 100%;
+  }
+  .search::placeholder { color: var(--ink-faint); }
+
+  /* sorting bins — the stats row doubles as the level filter */
+  .bins { display: flex; gap: 8px; flex-wrap: wrap; padding: 12px 0 14px; }
+  .bin {
+    display: flex; align-items: baseline; gap: 7px;
+    border: 1px solid var(--rule); border-radius: 3px;
+    background: var(--card); padding: 5px 11px;
+    color: var(--ink-soft);
+  }
+  .bin b { font-family: var(--mono); font-size: 14px; color: var(--ink); font-weight: 600; }
+  .bin span { font-size: 11px; text-transform: uppercase; letter-spacing: 0.07em; }
+  .bin.active { border-color: var(--ink); background: var(--manila); color: var(--ink); }
+  .bin.urgent b { color: var(--postmark); }
+  .bin.high b { color: var(--meter-blue); }
+  .bin.toggle.active { border-color: var(--meter-blue); background: #EAF1F8; }
+
+  /* ---------- layout ---------- */
+  main {
+    display: grid; grid-template-columns: minmax(340px, 46%) 1fr;
+    height: calc(100vh - 118px); min-height: 300px;
+  }
+  @media (max-width: 900px) {
+    main { grid-template-columns: 1fr; height: auto; }
+    #detail { border-left: none; border-top: 2px solid var(--ink); }
+  }
+
+  /* ---------- queue ---------- */
+  #queue { overflow-y: auto; padding: 12px; }
+  .row {
+    display: flex; gap: 12px; align-items: flex-start;
+    width: 100%; text-align: left;
+    background: var(--card); color: inherit;
+    border: 1px solid var(--rule); border-radius: 4px;
+    padding: 10px 12px; margin-bottom: 8px;
+  }
+  .row:hover { border-color: var(--manila-deep); }
+  .row.selected { border-color: var(--ink); box-shadow: 2px 2px 0 var(--manila-deep); }
+  .row.noreply { background: transparent; }
+  .row .who { font-weight: 600; font-size: 13.5px; }
+  .row .subj { font-weight: 500; font-size: 14px; margin-top: 1px; }
+  .row .sum { color: var(--ink-soft); font-size: 12.5px; margin-top: 3px;
+              display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .row .body { flex: 1; min-width: 0; }
+  .row .who, .row .subj { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .row .sum, .row .meta { display: block; }
+  .meta { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+
+  /* the score stamp — importance printed like a postage denomination */
+  .stamp {
+    flex: none; width: 58px; text-align: center;
+    border: 1px dashed var(--manila-deep); border-radius: 2px;
+    background: var(--paper); padding: 6px 2px 5px;
+    font-family: var(--mono);
+  }
+  .stamp .val { font-size: 19px; font-weight: 600; line-height: 1; }
+  .stamp .lvl { font-size: 9px; text-transform: uppercase; letter-spacing: 0.09em;
+                color: var(--ink-soft); margin-top: 3px; }
+  .stamp.urgent { border-color: var(--postmark); }
+  .stamp.urgent .val, .stamp.urgent .lvl { color: var(--postmark); }
+  .stamp.high .val { color: var(--meter-blue); }
+  .stamp.low .val { color: var(--ink-faint); }
+  .stamp.none .val { color: var(--ink-faint); }
+
+  .tag {
+    font-family: var(--mono); font-size: 10px; text-transform: uppercase;
+    letter-spacing: 0.06em; border-radius: 2px; padding: 1px 6px;
+    border: 1px solid var(--rule); color: var(--ink-soft); background: var(--paper);
+  }
+  .tag.unread { border-color: var(--meter-blue); color: var(--meter-blue); font-weight: 600; }
+  .tag.noreply { border-color: var(--manila-deep); color: var(--ink-soft); background: var(--manila); }
+  .tag.outline { border-color: var(--ok); color: var(--ok); }
+  .tag.sched { color: var(--ink-soft); }
+  .when { font-family: var(--mono); font-size: 11px; color: var(--ink-faint); flex: none; }
+
+  .empty { padding: 40px 24px; color: var(--ink-soft); }
+  .empty code { font-family: var(--mono); background: var(--manila); padding: 2px 6px; border-radius: 2px; }
+
+  /* ---------- detail ---------- */
+  #detail { overflow-y: auto; border-left: 2px solid var(--ink); background: var(--card); padding: 22px 26px; }
+  #detail .placeholder { color: var(--ink-faint); padding-top: 30px; }
+  .d-subject { font-size: 21px; font-weight: 700; letter-spacing: -0.01em; line-height: 1.25; }
+  .d-from { margin-top: 6px; font-size: 13px; color: var(--ink-soft); }
+  .d-from .addr { font-family: var(--mono); font-size: 12px; }
+  .d-tags { margin: 12px 0 4px; display: flex; gap: 6px; flex-wrap: wrap; }
+
+  .section { margin-top: 22px; }
+  .section > h3 {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em;
+    color: var(--ink-soft); border-bottom: 1px solid var(--rule);
+    padding-bottom: 5px; margin-bottom: 10px; font-weight: 700;
+  }
+  .justif { color: var(--ink-soft); font-size: 13.5px; }
+  .bigstamp { display: inline-block; margin-right: 12px; float: right; width: 74px; }
+  .bigstamp .val { font-size: 26px; }
+
+  .outline-list { padding-left: 20px; }
+  .outline-list li { margin-bottom: 6px; }
+  .slot-list { padding-left: 20px; font-family: var(--mono); font-size: 13px; }
+
+  textarea {
+    font-family: var(--mono); font-size: 13px; width: 100%; min-height: 120px;
+    border: 1px solid var(--manila-deep); border-radius: 3px; padding: 10px;
+    background: var(--paper); color: var(--ink); resize: vertical;
+  }
+  .actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+  .btn {
+    border: 1px solid var(--ink); border-radius: 3px; background: var(--card);
+    color: var(--ink); padding: 6px 14px; font-size: 13px; font-weight: 600;
+  }
+  .btn:hover { background: var(--manila); }
+  .btn.primary { background: var(--ink); color: var(--paper); }
+  .btn.primary:hover { background: var(--meter-blue); border-color: var(--meter-blue); }
+  .btn:disabled { opacity: 0.5; cursor: default; }
+
+  .draft {
+    white-space: pre-wrap; font-family: var(--mono); font-size: 13px;
+    background: var(--paper); border: 1px dashed var(--manila-deep);
+    border-radius: 3px; padding: 14px; margin-top: 10px;
+  }
+  .note { font-size: 12.5px; color: var(--ink-soft); margin-top: 8px; }
+  .error { color: var(--postmark); font-size: 13px; margin-top: 8px; }
+  .saved { color: var(--ok); font-size: 13px; margin-top: 8px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="masthead">
+    <h1>Mail<span class="desk">Desk</span></h1>
+    <span class="processed-note" id="processedNote"></span>
+    <span class="spacer"></span>
+    <input class="search" id="search" type="search" placeholder="search sender, subject, summary" aria-label="Search emails">
+  </div>
+  <div class="bins" id="bins" role="toolbar" aria-label="Filters"></div>
+</header>
+
+<main>
+  <div id="queue" role="listbox" aria-label="Emails sorted by importance"></div>
+  <div id="detail"><p class="placeholder">Select an email to review it.</p></div>
+</main>
+
+<script>
+"use strict";
+const api = (path) => fetch(path).then(async (r) => {
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || (r.status + " " + r.statusText));
+  return r.json();
+});
+
+const state = { level: null, unreadOnly: false, hideNoReply: false, search: "", selected: null, emails: [] };
+
+function ago(iso) {
+  if (!iso) return "";
+  const h = (Date.now() - new Date(iso)) / 3600000;
+  if (h < 1) return Math.max(1, Math.round(h * 60)) + "m ago";
+  if (h < 48) return Math.round(h) + "h ago";
+  return Math.round(h / 24) + "d ago";
+}
+function esc(s) {
+  return (s || "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+function senderName(s) {
+  const m = (s || "").match(/^\s*"?([^"<]+?)"?\s*</);
+  return m ? m[1] : (s || "");
+}
+function stamp(email, big) {
+  const lvl = email.importanceLevel || "none";
+  const val = email.importanceScore == null ? "–" : Math.round(email.importanceScore);
+  return `<span class="stamp ${lvl} ${big ? "bigstamp" : ""}" title="importance ${val} (${lvl})">
+    <span class="val">${val}</span><br><span class="lvl">${lvl === "none" ? "unscored" : lvl}</span></span>`;
+}
+function tags(email) {
+  const t = [];
+  if (email.readStatus === "unread") t.push('<span class="tag unread">unread</span>');
+  if (email.isNoReply) t.push('<span class="tag noreply">no-reply</span>');
+  if (email.isSchedulingRelated) t.push('<span class="tag sched">scheduling</span>');
+  if (email.replyOutline) t.push('<span class="tag outline">outline ' + esc(email.replyOutlineStatus) + "</span>");
+  return t.join("");
+}
+
+/* ---------- bins (stats that filter) ---------- */
+async function renderBins() {
+  const s = await api("/api/stats");
+  document.getElementById("processedNote").textContent =
+    s.total + " emails processed · " + s.withOutline + " with reply outlines";
+  const bins = [
+    { key: null, label: "all", n: s.total },
+    { key: "urgent", label: "urgent", n: s.byLevel.urgent },
+    { key: "high", label: "high", n: s.byLevel.high },
+    { key: "medium", label: "medium", n: s.byLevel.medium },
+    { key: "low", label: "low", n: s.byLevel.low },
+  ];
+  const el = document.getElementById("bins");
+  el.innerHTML = bins.map((b) =>
+    `<button class="bin ${b.key || "all"} ${state.level === b.key ? "active" : ""}" data-level="${b.key || ""}">
+       <b>${b.n}</b><span>${b.label}</span></button>`).join("") +
+    `<button class="bin toggle ${state.unreadOnly ? "active" : ""}" id="unreadToggle"><b>${s.unread}</b><span>unread only</span></button>
+     <button class="bin toggle ${state.hideNoReply ? "active" : ""}" id="noReplyToggle"><b>${s.noReply}</b><span>hide no-reply</span></button>`;
+  el.querySelectorAll("[data-level]").forEach((b) =>
+    b.addEventListener("click", () => { state.level = b.dataset.level || null; refresh(); }));
+  el.querySelector("#unreadToggle").addEventListener("click", () => { state.unreadOnly = !state.unreadOnly; refresh(); });
+  el.querySelector("#noReplyToggle").addEventListener("click", () => { state.hideNoReply = !state.hideNoReply; refresh(); });
+}
+
+/* ---------- queue ---------- */
+async function renderQueue() {
+  const q = new URLSearchParams({ sortBy: "importance", descending: "true", limit: "500" });
+  if (state.level) q.set("importance", state.level);
+  if (state.unreadOnly) q.set("readStatus", "unread");
+  if (state.hideNoReply) q.set("noReply", "false");
+  if (state.search) q.set("search", state.search);
+  const data = await api("/api/emails?" + q);
+  state.emails = data.emails;
+  const el = document.getElementById("queue");
+  if (!data.emails.length) {
+    el.innerHTML = state.search || state.level || state.unreadOnly || state.hideNoReply
+      ? '<div class="empty">Nothing matches these filters.</div>'
+      : '<div class="empty">No processed emails yet. Ingest and process first: <code>python -m pipeline.cli process</code></div>';
+    return;
+  }
+  el.innerHTML = data.emails.map((e) => `
+    <button class="row ${e.isNoReply ? "noreply" : ""} ${state.selected === e.emailId ? "selected" : ""}"
+            data-id="${e.emailId}" role="option" aria-selected="${state.selected === e.emailId}">
+      ${stamp(e)}
+      <span class="body">
+        <span class="who">${esc(senderName(e.sender))}</span>
+        <span class="subj">${esc(e.subject) || "(no subject)"}</span>
+        ${e.summary ? `<span class="sum">${esc(e.summary)}</span>` : ""}
+        <span class="meta">${tags(e)}</span>
+      </span>
+      <span class="when">${ago(e.receivedAt)}</span>
+    </button>`).join("");
+  el.querySelectorAll(".row").forEach((r) =>
+    r.addEventListener("click", () => select(r.dataset.id)));
+}
+
+/* ---------- detail ---------- */
+async function select(id) {
+  state.selected = id;
+  document.querySelectorAll(".row").forEach((r) => {
+    r.classList.toggle("selected", r.dataset.id === id);
+    r.setAttribute("aria-selected", r.dataset.id === id);
+  });
+  const el = document.getElementById("detail");
+  let e;
+  try { e = await api("/api/emails/" + id); }
+  catch (err) { el.innerHTML = `<p class="error">${esc(err.message)}</p>`; return; }
+
+  const slots = e.calendarContext && e.calendarContext.suggestedSlots || [];
+  el.innerHTML = `
+    ${stamp(e, true)}
+    <h2 class="d-subject">${esc(e.subject) || "(no subject)"}</h2>
+    <p class="d-from">${esc(senderName(e.sender))} · <span class="addr">${esc(e.sender)}</span><br>
+       received ${ago(e.receivedAt)} · ${e.readStatus}</p>
+    <div class="d-tags">${tags(e)}</div>
+
+    <div class="section"><h3>Summary</h3>
+      <p>${esc(e.summary) || '<span class="note">Not summarized yet.</span>'}</p></div>
+
+    <div class="section"><h3>Why this score</h3>
+      <p class="justif">${esc(e.importanceJustification) || "Not scored yet."}</p>
+      ${e.isNoReply && e.noReplyReason ? `<p class="note">Flagged no-reply: ${esc(e.noReplyReason)}</p>` : ""}</div>
+
+    ${slots.length ? `<div class="section"><h3>Open slots on your calendar</h3>
+      <ul class="slot-list">${slots.map((s) =>
+        `<li>${new Date(s.start).toLocaleString([], {weekday:"short", month:"short", day:"numeric", hour:"numeric", minute:"2-digit"})}
+         – ${new Date(s.end).toLocaleTimeString([], {hour:"numeric", minute:"2-digit"})}</li>`).join("")}</ul></div>` : ""}
+
+    <div class="section"><h3>Reply outline</h3><div id="outlineArea"></div></div>
+    <div class="section" id="draftSection" hidden><h3>Full draft (review before sending)</h3>
+      <div class="draft" id="draftText"></div>
+      <div class="actions"><button class="btn" id="copyDraft">Copy draft</button></div></div>`;
+  renderOutline(e);
+}
+
+function renderOutline(e) {
+  const area = document.getElementById("outlineArea");
+  if (!e.outlineEligible && !e.replyOutline) {
+    const why = e.isNoReply ? "This is no-reply mail — it never gets a reply outline."
+      : e.readStatus === "unread" ? "Unread — an outline is drafted once you have read the email."
+      : "Not classified yet — run the pipeline.";
+    area.innerHTML = `<p class="note">${why}</p>`;
+    return;
+  }
+  if (!e.replyOutline) {
+    area.innerHTML = '<p class="note">No outline yet — the next pipeline run will draft one.</p>';
+    return;
+  }
+  area.innerHTML = `
+    <ul class="outline-list">${e.replyOutline.map((b) => `<li>${esc(b)}</li>`).join("")}</ul>
+    <div class="actions">
+      <button class="btn" id="editOutline">Edit outline</button>
+      <button class="btn primary" id="expandBtn">Expand to full draft</button>
+    </div><div id="outlineMsg"></div>`;
+  document.getElementById("editOutline").addEventListener("click", () => editOutline(e));
+  document.getElementById("expandBtn").addEventListener("click", () => expandDraft(e));
+}
+
+function editOutline(e) {
+  const area = document.getElementById("outlineArea");
+  area.innerHTML = `
+    <textarea id="outlineInput" aria-label="Outline bullets, one per line">${esc(e.replyOutline.join("\n"))}</textarea>
+    <p class="note">One bullet per line.</p>
+    <div class="actions">
+      <button class="btn primary" id="saveOutline">Save outline</button>
+      <button class="btn" id="cancelEdit">Cancel</button>
+    </div><div id="outlineMsg"></div>`;
+  document.getElementById("cancelEdit").addEventListener("click", () => renderOutline(e));
+  document.getElementById("saveOutline").addEventListener("click", async () => {
+    const lines = document.getElementById("outlineInput").value.split("\n").map((l) => l.trim()).filter(Boolean);
+    const msg = document.getElementById("outlineMsg");
+    try {
+      const r = await fetch("/api/emails/" + e.emailId + "/outline", {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ outline: lines }),
+      });
+      if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
+      const updated = await r.json();
+      renderOutline(updated);
+      document.getElementById("outlineMsg").innerHTML = '<p class="saved">Outline saved.</p>';
+      renderQueue();
+    } catch (err) { msg.innerHTML = `<p class="error">${esc(err.message)}</p>`; }
+  });
+}
+
+async function expandDraft(e) {
+  const btn = document.getElementById("expandBtn");
+  const msg = document.getElementById("outlineMsg");
+  btn.disabled = true; btn.textContent = "Expanding…";
+  try {
+    const r = await fetch("/api/emails/" + e.emailId + "/expand", { method: "POST" });
+    if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
+    const body = await r.json();
+    const section = document.getElementById("draftSection");
+    section.hidden = false;
+    document.getElementById("draftText").textContent = body.draft;
+    document.getElementById("copyDraft").onclick = () =>
+      navigator.clipboard.writeText(body.draft).catch(() => {});
+    section.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  } catch (err) {
+    msg.innerHTML = `<p class="error">${esc(err.message)}</p>`;
+  } finally {
+    btn.disabled = false; btn.textContent = "Expand to full draft";
+  }
+}
+
+/* ---------- keyboard: j/k or arrows walk the queue ---------- */
+document.addEventListener("keydown", (ev) => {
+  if (ev.target.matches("input, textarea")) return;
+  if (!["ArrowDown", "ArrowUp", "j", "k"].includes(ev.key)) return;
+  ev.preventDefault();
+  const ids = state.emails.map((e) => e.emailId);
+  if (!ids.length) return;
+  const at = ids.indexOf(state.selected);
+  const next = (ev.key === "ArrowDown" || ev.key === "j")
+    ? ids[Math.min(at + 1, ids.length - 1)] : ids[Math.max(at - 1, 0)];
+  select(next);
+  const row = document.querySelector(`.row[data-id="${next}"]`);
+  if (row) row.scrollIntoView({ block: "nearest" });
+});
+
+let searchTimer;
+document.getElementById("search").addEventListener("input", (ev) => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => { state.search = ev.target.value.trim(); refresh(); }, 250);
+});
+
+function refresh() { renderBins(); renderQueue(); }
+refresh();
+</script>
+</body>
+</html>
