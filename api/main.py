@@ -193,6 +193,31 @@ def expand_draft(email_id: str) -> Dict[str, Any]:
         raise HTTPException(status_code=501, detail=str(exc))
 
 
+@app.post("/api/refresh")
+def refresh_pipeline(ingestLimit: Optional[int] = Query(None, ge=1, le=500)) -> Dict[str, Any]:
+    """Ingest new Gmail messages and process whatever changed.
+
+    Called by the Chrome extension so new mail and read-status flips get
+    picked up without a manual pipeline run. Slow by nature (Gmail fetch +
+    LLM stages); FastAPI runs sync endpoints in a threadpool, so it blocks
+    only its own request. 409 means a refresh is already in flight — callers
+    should wait and re-poll rather than retry.
+    """
+    from pipeline.refresh import RefreshBusyError, refresh
+
+    try:
+        result = refresh(DB_PATH, ingest_limit=ingestLimit)
+    except RefreshBusyError:
+        raise HTTPException(status_code=409, detail="A refresh is already running.")
+    except RuntimeError as exc:
+        # Covers MissingCredentialsError and the non-interactive token failure
+        # from gmail_auth — the fix is a terminal action, not a retry.
+        raise HTTPException(status_code=503, detail="Gmail auth unavailable: {0}".format(exc))
+    # `plan` maps email_id -> stage tuple; useful in logs, noise on the wire.
+    result.pop("plan", None)
+    return result
+
+
 @app.get("/api/stats")
 def stats() -> Dict[str, Any]:
     """Counts the review UI shows above the list."""

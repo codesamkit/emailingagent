@@ -3,13 +3,15 @@
 // use the `EmailAgent` global it defines.
 
 const EmailAgent = (() => {
-  const REFRESH_INTERVAL_MS = 60_000;
+  const INDEX_REFRESH_MS = 60_000; // re-read the processed-email index
+  const PIPELINE_REFRESH_MS = 120_000; // ingest + process new mail via the backend
 
   // threadId -> email summary row, emailId -> email summary row
   const byThread = new Map();
   const byEmailId = new Map();
   let lastRefresh = 0;
   let backendReachable = null; // null = unknown, then true/false
+  let pipelineRunning = false;
   const refreshListeners = [];
 
   function call(path, method = "GET", body = null) {
@@ -37,12 +39,31 @@ const EmailAgent = (() => {
     return true;
   }
 
-  async function ensureFresh() {
-    if (Date.now() - lastRefresh > REFRESH_INTERVAL_MS) await refreshIndex();
+  // Ask the backend to ingest new mail + process what changed, then re-read
+  // the index. A 409 means another caller's refresh is mid-flight — its
+  // results land in the same database, so just re-read the index after a beat.
+  async function refreshPipeline() {
+    if (pipelineRunning) return { ok: false, status: 0, busy: true };
+    pipelineRunning = true;
+    try {
+      const result = await call("/api/refresh", "POST");
+      if (result?.status === 409) {
+        await new Promise((r) => setTimeout(r, 10_000));
+      }
+      await refreshIndex();
+      return result;
+    } finally {
+      pipelineRunning = false;
+    }
   }
 
-  refreshIndex();
-  setInterval(refreshIndex, REFRESH_INTERVAL_MS);
+  async function ensureFresh() {
+    if (Date.now() - lastRefresh > INDEX_REFRESH_MS) await refreshIndex();
+  }
+
+  refreshIndex().then(() => refreshPipeline());
+  setInterval(refreshIndex, INDEX_REFRESH_MS);
+  setInterval(refreshPipeline, PIPELINE_REFRESH_MS);
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden) ensureFresh();
   });
@@ -50,6 +71,7 @@ const EmailAgent = (() => {
   return {
     call,
     refreshIndex,
+    refreshPipeline,
     onRefresh: (fn) => refreshListeners.push(fn),
     forThread: (threadId) => byThread.get(threadId),
     forEmail: (emailId) => byEmailId.get(emailId),

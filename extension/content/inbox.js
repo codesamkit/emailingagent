@@ -1,4 +1,4 @@
-// Inbox list view: stamp an importance badge on each thread row.
+// Inbox list view: stamp an importance badge (+ topic chip) on each row.
 //
 // Gmail row anatomy: each list row is a <tr class="zA"> containing a
 // <span data-legacy-thread-id="..."> (hex id matching the Gmail API's
@@ -6,33 +6,61 @@
 // obfuscated and unstable — data-legacy-thread-id is the one durable hook.
 
 (() => {
-  const BADGE_CLASS = "ea-badge";
+  const WRAP_CLASS = "ea-row-chips";
 
-  function badgeFor(email) {
-    const badge = document.createElement("span");
+  function chipsFor(email) {
+    const wrap = document.createElement("span");
+    wrap.className = WRAP_CLASS;
+    // Fingerprint of what's rendered, so unchanged rows are skipped — the
+    // MutationObserver sees our own insertions, and re-rendering every tick
+    // would loop forever.
+    wrap.dataset.eaKey = fingerprint(email);
+
     const level = email.importanceLevel || "unscored";
-    badge.className = `${BADGE_CLASS} ea-level-${level}`;
+    const badge = document.createElement("span");
+    badge.className = `ea-badge ea-level-${level}`;
     badge.textContent =
       email.importanceScore != null ? `${level} ${Math.round(email.importanceScore)}` : level;
     if (email.importanceJustification) badge.title = email.importanceJustification;
-    return badge;
+    wrap.appendChild(badge);
+
+    if (email.category) {
+      const topic = document.createElement("span");
+      topic.className = "ea-chip ea-row-topic";
+      topic.textContent = email.category;
+      wrap.appendChild(topic);
+    }
+    if (email.isSchedulingRelated) {
+      const cal = document.createElement("span");
+      cal.className = "ea-chip ea-row-topic";
+      cal.textContent = "📅";
+      cal.title = "Scheduling-related — calendar checked";
+      wrap.appendChild(cal);
+    }
+    return wrap;
+  }
+
+  function fingerprint(email) {
+    return [email.importanceLevel, email.importanceScore, email.category, email.isSchedulingRelated].join("|");
   }
 
   function decorateRow(threadSpan) {
     const threadId = threadSpan.getAttribute("data-legacy-thread-id");
     const email = EmailAgent.forThread(threadId);
-    const existing = threadSpan.parentElement?.querySelector(`.${BADGE_CLASS}`);
+    const parent = threadSpan.parentElement;
+    if (!parent) return;
+    const existing = parent.querySelector(`.${WRAP_CLASS}`);
 
     if (!email || !email.importanceLevel) {
       if (existing) existing.remove();
       return;
     }
     if (existing) {
-      // Re-render in place so score changes after a pipeline re-run show up.
-      existing.replaceWith(badgeFor(email));
+      if (existing.dataset.eaKey === fingerprint(email)) return; // unchanged
+      existing.replaceWith(chipsFor(email));
       return;
     }
-    threadSpan.parentElement?.insertBefore(badgeFor(email), threadSpan);
+    parent.insertBefore(chipsFor(email), threadSpan);
   }
 
   function decorateAll() {

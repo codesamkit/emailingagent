@@ -101,13 +101,33 @@
       body.appendChild(sec);
     }
 
-    const slots = email.calendarContext?.suggestedSlots || [];
-    if (slots.length) {
-      const sec = section("Suggested times");
-      const list = el("ul", "ea-list");
-      slots.forEach((slot) => list.appendChild(el("li", null, formatSlot(slot))));
-      sec.appendChild(list);
-      body.appendChild(sec);
+    const ctx = email.calendarContext;
+    if (ctx) {
+      const slots = ctx.suggestedSlots || [];
+      if (slots.length) {
+        const sec = section("Suggested times");
+        const list = el("ul", "ea-list");
+        slots.forEach((slot) => list.appendChild(el("li", null, formatSlot(slot))));
+        sec.appendChild(list);
+        body.appendChild(sec);
+      }
+
+      const events = (ctx.events || []).slice(0, 5);
+      if (events.length) {
+        const sec = section(`Your calendar (${ctx.eventCount ?? events.length} events)`);
+        const list = el("ul", "ea-list");
+        events.forEach((event) => {
+          const when = event.allDay
+            ? new Date(event.start).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })
+            : formatSlot(event);
+          list.appendChild(el("li", null, `${event.summary || "(busy)"} — ${when}`));
+        });
+        sec.appendChild(list);
+        if ((ctx.busyBlocks || []).length) {
+          sec.appendChild(el("p", "ea-text ea-muted", `${ctx.busyBlocks.length} busy blocks in the checked window.`));
+        }
+        body.appendChild(sec);
+      }
     }
 
     if (email.replyOutline?.length) {
@@ -181,9 +201,29 @@
         const fallback = await EmailAgent.getDetail(sibling.emailId);
         if (fallback?.ok) return render(fallback.data);
       }
-      showMessage("This email hasn't been processed yet — run the pipeline and refresh.");
+      await refreshAndRetry(emailId);
     } else {
       showMessage("Backend unreachable — start it with: uvicorn api.main:app");
+    }
+  }
+
+  // New mail the pipeline hasn't seen yet: trigger a backend refresh
+  // (ingest + process) and re-ask, once per message id per page load.
+  const refreshAttempted = new Set();
+  async function refreshAndRetry(emailId) {
+    if (refreshAttempted.has(emailId)) {
+      showMessage("This email couldn't be processed — check the backend logs.");
+      return;
+    }
+    refreshAttempted.add(emailId);
+    showMessage("New email — processing it now… (this can take a minute)");
+    await EmailAgent.refreshPipeline();
+    if (emailId !== currentEmailId) return; // user moved on while we worked
+    const retry = await EmailAgent.getDetail(emailId);
+    if (retry?.ok) {
+      render(retry.data);
+    } else {
+      showMessage("This email couldn't be processed — check the backend logs.");
     }
   }
 
