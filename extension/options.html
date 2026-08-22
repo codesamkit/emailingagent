@@ -1,0 +1,23 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Email Agent options</title>
+    <style>
+      body { font: 14px/1.5 Roboto, Arial, sans-serif; color: #202124; padding: 24px; max-width: 480px; }
+      label { display: block; font-weight: 600; margin-bottom: 6px; }
+      input { width: 100%; padding: 8px; border: 1px solid #dadce0; border-radius: 6px; font-size: 14px; box-sizing: border-box; }
+      button { margin-top: 12px; padding: 8px 16px; border: none; border-radius: 6px; background: #1a73e8; color: #fff; font-weight: 600; cursor: pointer; }
+      #status { margin-left: 10px; color: #137333; }
+      p.hint { color: #5f6368; font-size: 12px; }
+    </style>
+  </head>
+  <body>
+    <h2>Email Agent</h2>
+    <label for="backendUrl">Backend URL</label>
+    <input id="backendUrl" type="url" placeholder="http://127.0.0.1:8000" />
+    <p class="hint">Where the FastAPI backend is running (<code>uvicorn api.main:app</code>).</p>
+    <button id="save">Save</button><span id="status"></span>
+    <script src="options.js"></script>
+  </body>
+</html>
