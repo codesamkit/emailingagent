@@ -39,10 +39,12 @@ SYSTEM_PROMPT = (
     "list of 2-5 terse bullet points describing what the reply should say — "
     "it is NOT the reply itself. The reply is written BY the mailbox owner "
     "(the To: recipient) TO the From: sender. Write bullets as instructions "
-    'to the mailbox owner for their reply ("confirm the deadline", "ask '
-    'which dataset they mean") — never as instructions to the sender, and '
-    "never referring to the mailbox owner in the third person. Be specific "
-    "to this email: reference the actual asks, names, and dates in it. Never "
+    "to the mailbox owner for their reply — never as instructions to the "
+    "sender, and never referring to the mailbox owner in the third person. "
+    "Each bullet must name one concrete point drawn from THIS email's actual "
+    "content — its specific questions, asks, names, and dates. Do not write "
+    "generic bullets (e.g. about deadlines or clarifications) unless the "
+    "email itself raises that point. Never "
     "invent facts, commitments, prices, or dates that are not in the email. "
     "If the email proposes or asks about meeting times, do NOT guess at "
     "availability — the caller appends real calendar data separately."
