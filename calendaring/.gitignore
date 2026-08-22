@@ -1,0 +1,3 @@
+# The Calendar OAuth token grants access to the user's calendar — never commit.
+data/
+*token*.json
