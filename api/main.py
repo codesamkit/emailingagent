@@ -193,6 +193,35 @@ def expand_draft(email_id: str) -> Dict[str, Any]:
         raise HTTPException(status_code=501, detail=str(exc))
 
 
+@app.post("/api/emails/{email_id}/refresh")
+def refresh_email(email_id: str) -> Dict[str, Any]:
+    """Re-fetch one message from Gmail and process what it needs.
+
+    The extension calls this when the user opens a message that is unread or
+    unknown in the database — the read flip unlocks the outline within
+    seconds instead of waiting for the next bulk refresh.
+    """
+    from googleapiclient.errors import HttpError
+
+    from pipeline.refresh import refresh_one
+
+    try:
+        email = refresh_one(email_id, DB_PATH)
+    except HttpError as exc:
+        status = getattr(getattr(exc, "resp", None), "status", None)
+        # Gmail answers 404 for a well-formed unknown id and 400 for a
+        # malformed one — both mean "no such message" to our clients.
+        if status in (400, 404):
+            raise HTTPException(status_code=404, detail="Gmail has no message {0!r}".format(email_id))
+        raise HTTPException(status_code=502, detail="Gmail error: {0}".format(exc))
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail="Gmail auth unavailable: {0}".format(exc))
+    if email is None:
+        raise HTTPException(status_code=404, detail="No processed email {0!r}".format(email_id))
+    # Same shape as GET /api/emails/{id} so clients can swap responses in.
+    return get_email(email_id)
+
+
 @app.post("/api/refresh")
 def refresh_pipeline(ingestLimit: Optional[int] = Query(None, ge=1, le=500)) -> Dict[str, Any]:
     """Ingest new Gmail messages and process whatever changed.

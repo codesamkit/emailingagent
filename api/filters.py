@@ -11,7 +11,7 @@ from typing import List, Optional
 
 from models.schema import ImportanceLevel, ProcessedEmail, ReadStatus
 
-SORT_FIELDS = ("importance", "received", "sender")
+SORT_FIELDS = ("importance", "received", "sender", "category", "effort")
 
 
 def apply_filters(
@@ -92,5 +92,26 @@ def sort_emails(
 
     if sort_by == "received":
         return sorted(emails, key=lambda e: e.received_at, reverse=descending)
+
+    if sort_by == "category":
+        # Uncategorized last for the same reason unscored sorts last; within a
+        # topic, most important first so each group leads with what matters.
+        labeled = [e for e in emails if e.category]
+        unlabeled = [e for e in emails if not e.category]
+        labeled.sort(key=lambda e: -(e.importance_score or 0))
+        labeled.sort(key=lambda e: e.category.lower(), reverse=descending)
+        return labeled + unlabeled
+
+    if sort_by == "effort":
+        from drafting.effort import effort_rank
+
+        ranked = [(effort_rank(e), e) for e in emails]
+        known = [(r, e) for r, e in ranked if r is not None]
+        unknown = [e for r, e in ranked if r is None]
+        # Ties broken by importance: among equally-quick replies, do the one
+        # that matters most first.
+        known.sort(key=lambda pair: -(pair[1].importance_score or 0))
+        known.sort(key=lambda pair: pair[0], reverse=descending)
+        return [e for _, e in known] + unknown
 
     return sorted(emails, key=lambda e: (e.sender or "").lower(), reverse=descending)

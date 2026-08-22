@@ -114,6 +114,15 @@
   }
   .search:hover { background: var(--fill-2); }
   .search:focus { outline: 2px solid var(--accent-vivid); outline-offset: 1px; }
+  .sort {
+    font-family: var(--sans); font-size: 13px;
+    border: none; border-radius: 7px;
+    background: var(--fill); color: var(--ink);
+    padding: 6px 9px;
+    transition: background-color 160ms var(--ease);
+  }
+  .sort:hover { background: var(--fill-2); }
+  .sort:focus { outline: 2px solid var(--accent-vivid); outline-offset: 1px; }
   .theme-btn {
     display: grid; place-items: center;
     width: 30px; height: 30px; padding: 0;
@@ -221,6 +230,8 @@
                 background: color-mix(in srgb, var(--accent-vivid) 14%, transparent); }
   .tag.outline { color: var(--ok);
                  background: color-mix(in srgb, var(--ok) 13%, transparent); }
+  .tag.effort { color: var(--urgent);
+                background: color-mix(in srgb, var(--urgent) 11%, transparent); }
 
   /* skeleton rows while the queue loads */
   .skel { border-radius: 9px; padding: 10px; margin-bottom: 2px; display: flex; gap: 12px; }
@@ -326,6 +337,13 @@
     </span>
     <span class="processed-note" id="processedNote"></span>
     <span class="spacer"></span>
+    <select class="sort" id="sortBy" aria-label="Sort emails by">
+      <option value="importance">Sort: importance</option>
+      <option value="effort">Sort: effort (quick first)</option>
+      <option value="category">Sort: category</option>
+      <option value="received">Sort: newest</option>
+      <option value="sender">Sort: sender</option>
+    </select>
     <input class="search" id="search" type="search" placeholder="Search sender, subject, summary" aria-label="Search emails">
     <button class="theme-btn" id="themeBtn" aria-label="Theme: auto" title="Theme: auto"></button>
   </div>
@@ -345,7 +363,11 @@ const api = (path) => fetch(path).then(async (r) => {
   return r.json();
 });
 
-const state = { level: null, category: null, unreadOnly: false, hideNoReply: false, search: "", selected: null, emails: [], loaded: false };
+const state = { level: null, category: null, unreadOnly: false, hideNoReply: false, search: "", selected: null, emails: [], loaded: false, sortBy: "importance" };
+
+/* Per-field natural direction: scores descend; names, topics, and effort
+   ranks ascend (quick replies first). */
+const SORT_DESCENDING = { importance: "true", received: "true", sender: "false", category: "false", effort: "false" };
 
 /* ---------- theme: auto → dark → light, persisted ---------- */
 const THEME_KEY = "valence-theme";
@@ -417,6 +439,7 @@ function tags(email) {
   if (email.isNoReply) t.push('<span class="tag noreply">no-reply</span>');
   if (email.isSchedulingRelated) t.push('<span class="tag sched">scheduling</span>');
   if (email.replyOutline) t.push('<span class="tag outline">outline ' + esc(email.replyOutlineStatus) + "</span>");
+  if (email.replyEffort) t.push('<span class="tag effort">' + esc(email.replyEffort) + " reply</span>");
   return t.join("");
 }
 
@@ -469,7 +492,7 @@ function skeletons() {
 async function renderQueue() {
   const el = document.getElementById("queue");
   if (!state.loaded) el.innerHTML = skeletons();
-  const q = new URLSearchParams({ sortBy: "importance", descending: "true", limit: "500" });
+  const q = new URLSearchParams({ sortBy: state.sortBy, descending: SORT_DESCENDING[state.sortBy], limit: "500" });
   if (state.level) q.set("importance", state.level);
   if (state.category) q.set("category", state.category);
   if (state.unreadOnly) q.set("readStatus", "unread");
@@ -635,6 +658,10 @@ document.addEventListener("keydown", (ev) => {
 });
 
 let searchTimer;
+document.getElementById("sortBy").addEventListener("change", (ev) => {
+  state.sortBy = ev.target.value;
+  renderQueue();
+});
 document.getElementById("search").addEventListener("input", (ev) => {
   clearTimeout(searchTimer);
   searchTimer = setTimeout(() => { state.search = ev.target.value.trim(); refresh(); }, 250);

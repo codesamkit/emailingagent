@@ -75,8 +75,16 @@ const EmailAgent = (() => {
     onRefresh: (fn) => refreshListeners.push(fn),
     forThread: (threadId) => byThread.get(threadId),
     forEmail: (emailId) => byEmailId.get(emailId),
+    allEmails: () => [...byEmailId.values()],
     isReachable: () => backendReachable,
     getDetail: (emailId) => call(`/api/emails/${encodeURIComponent(emailId)}`),
+    // Fast path: re-fetch one message (picks up read flips / brand-new mail)
+    // and run only the stages it needs — seconds, vs minutes for /api/refresh.
+    refreshEmail: async (emailId) => {
+      const result = await call(`/api/emails/${encodeURIComponent(emailId)}/refresh`, "POST");
+      if (result?.ok) await refreshIndex();
+      return result;
+    },
     expandDraft: (emailId) => call(`/api/emails/${encodeURIComponent(emailId)}/expand`, "POST"),
   };
 })();

@@ -9,6 +9,17 @@ A Manifest V3 extension that surfaces the email agent's output inside Gmail:
   importance reasoning, topic, no-reply flag, calendar context (suggested
   slots + your upcoming events + busy blocks) for scheduling emails, and the
   reply outline with an *Expand to full draft* button (copies to clipboard).
+- **Inbox tab** — the panel's second tab lists the whole processed inbox in
+  the agent's order: sort by importance, reply effort (quick first), category,
+  or newest. Clicking a row opens that thread in Gmail. (Gmail's own rows
+  can't be reordered, so the sorted view lives here.)
+- **Reply effort** — quick / moderate / involved, derived from the reply
+  outline's size (`drafting/effort.py`, no LLM call); shown as a chip and
+  sortable in both the panel and the Valence review UI.
+- **Instant outlines** — opening an unread email triggers
+  `POST /api/emails/{id}/refresh`, a fast single-message re-fetch that picks
+  up the read flip and generates the outline in seconds, instead of waiting
+  for the next bulk refresh.
 - **Auto-refresh** — the extension calls `POST /api/refresh` on load and
   every 2 minutes (and on demand when you open a not-yet-processed email),
   which ingests new Gmail messages and runs the incremental pipeline. No

@@ -140,6 +140,34 @@ def process_incremental(
     return result
 
 
+def refresh_one(email_id: str, db_path: Optional[Path] = None):
+    """Re-fetch a single message from Gmail and run whatever stages it needs.
+
+    The fast path behind the extension's open-email view: when the user opens
+    a message, Gmail flips it to read, and this picks up the flip (unlocking
+    the reply outline) in seconds instead of waiting for the next full
+    refresh. Also handles brand-new mail the bulk ingest hasn't seen.
+
+    Raises googleapiclient.errors.HttpError (404) for an unknown message id
+    and RuntimeError when Gmail auth is unavailable non-interactively.
+    """
+    from ingestion.fetch import get_message
+    from ingestion.gmail_auth import get_gmail_service
+    from ingestion.parse import to_raw_email
+
+    service = get_gmail_service(allow_interactive=False)
+    raw = to_raw_email(get_message(service, email_id))
+    store.init_db(db_path)
+    store.upsert_emails([raw], db_path)
+
+    existing = {e.email_id: e for e in persist.all_processed(db_path)}
+    stages = incremental.stages_for(raw, existing.get(email_id))
+    if stages:
+        pipeline = Pipeline.with_defaults(stages=stages)
+        persist.upsert(pipeline.process([raw], existing=existing), db_path)
+    return persist.get(email_id, db_path)
+
+
 _refresh_lock = threading.Lock()
 
 

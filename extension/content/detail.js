@@ -1,15 +1,23 @@
-// Open-email view: a floating panel with the agent's take on the message —
-// summary, importance, no-reply flag, calendar slots, and the reply outline
-// with expand-to-draft.
+// The floating agent panel, two tabs:
+//  - Email: the open message's analysis — summary, importance, effort,
+//    no-reply flag, calendar context, reply outline with expand-to-draft.
+//    Opening an unread email triggers a fast single-message refresh, so the
+//    read flip is picked up and the outline appears without a manual run.
+//  - Inbox: the whole processed inbox in OUR order (importance / effort /
+//    category / newest) — Gmail's own rows can't be reordered, so the sorted
+//    view lives here; clicking a row opens that thread in Gmail.
 //
-// Each open message in a Gmail thread renders a node carrying
-// data-legacy-message-id (hex id == our ProcessedEmail.email_id). We follow
-// the newest message in the thread. The panel is fixed-position rather than
-// woven into Gmail's DOM so Gmail markup changes can't break the layout.
+// Each open message renders a node carrying data-legacy-message-id (hex id
+// == ProcessedEmail.email_id). The panel is fixed-position rather than woven
+// into Gmail's DOM so Gmail markup changes can't break the layout.
 
 (() => {
   let currentEmailId = null;
   let panel = null;
+  let activeTab = "email";
+  let inboxSort = "importance";
+
+  const EFFORT_RANK = { quick: 0, moderate: 1, involved: 2 };
 
   // --- tiny DOM helpers (all API data goes through textContent, never HTML) ---
   function el(tag, className, text) {
@@ -32,33 +40,66 @@
     return `${start} – ${end}`;
   }
 
+  function levelBadge(email) {
+    const level = email.importanceLevel || "unscored";
+    const badge = el("span", `ea-badge ea-level-${level}`);
+    badge.textContent =
+      email.importanceScore != null ? `${level} ${Math.round(email.importanceScore)}` : level;
+    if (email.importanceJustification) badge.title = email.importanceJustification;
+    return badge;
+  }
+
   // --- panel shell -----------------------------------------------------------
   function ensurePanel() {
     if (panel) return panel;
-    panel = el("div", "ea-panel ea-hidden");
+    panel = el("div", "ea-panel");
 
     const header = el("div", "ea-panel-header");
     header.appendChild(el("span", "ea-panel-title", "Email Agent"));
+
+    const tabs = el("div", "ea-tabs");
+    for (const [key, label] of [["email", "Email"], ["inbox", "Inbox"]]) {
+      const tab = el("button", "ea-tab", label);
+      tab.dataset.tab = key;
+      tab.addEventListener("click", () => setTab(key));
+      tabs.appendChild(tab);
+    }
+    header.appendChild(tabs);
+
     const toggle = el("button", "ea-toggle", "–");
     toggle.addEventListener("click", () => {
       panel.classList.toggle("ea-collapsed");
       toggle.textContent = panel.classList.contains("ea-collapsed") ? "+" : "–";
     });
     header.appendChild(toggle);
+
     panel.appendChild(header);
     panel.appendChild(el("div", "ea-panel-body"));
-
+    panel.appendChild(el("div", "ea-panel-inbox"));
     document.body.appendChild(panel);
+
+    setTab("email");
+    renderInbox();
+    EmailAgent.onRefresh(renderInbox);
     return panel;
+  }
+
+  function setTab(key) {
+    activeTab = key;
+    ensurePanel();
+    panel.querySelectorAll(".ea-tab").forEach((tab) =>
+      tab.classList.toggle("ea-tab-active", tab.dataset.tab === key)
+    );
+    panel.querySelector(".ea-panel-body").hidden = key !== "email";
+    panel.querySelector(".ea-panel-inbox").hidden = key !== "inbox";
   }
 
   function showMessage(text) {
     const body = ensurePanel().querySelector(".ea-panel-body");
     body.replaceChildren(el("div", "ea-empty", text));
-    panel.classList.remove("ea-hidden");
   }
 
-  // --- rendering -------------------------------------------------------------
+  // --- Email tab -------------------------------------------------------------
   function render(email) {
     const body = ensurePanel().querySelector(".ea-panel-body");
     body.replaceChildren();
@@ -69,18 +110,13 @@
     body.appendChild(head);
 
     const chips = el("div", "ea-chips");
-    if (email.importanceLevel) {
-      const chip = el(
-        "span",
-        `ea-badge ea-level-${email.importanceLevel}`,
-        email.importanceScore != null
-          ? `${email.importanceLevel} ${Math.round(email.importanceScore)}`
-          : email.importanceLevel
-      );
-      if (email.importanceJustification) chip.title = email.importanceJustification;
+    if (email.importanceLevel) chips.appendChild(levelBadge(email));
+    if (email.category) chips.appendChild(el("span", "ea-chip", email.category));
+    if (email.replyEffort) {
+      const chip = el("span", "ea-chip ea-chip-effort", `${email.replyEffort} reply`);
+      chip.title = "Estimated effort to reply, from the outline";
       chips.appendChild(chip);
     }
-    if (email.category) chips.appendChild(el("span", "ea-chip", email.category));
     if (email.isNoReply) {
       const chip = el("span", "ea-chip ea-chip-noreply", "no-reply");
       if (email.noReplyReason) chip.title = email.noReplyReason;
@@ -143,10 +179,24 @@
     } else if (email.isNoReply) {
       body.appendChild(el("div", "ea-empty", "No reply needed — automated sender."));
     } else if (email.readStatus === "unread") {
-      body.appendChild(el("div", "ea-empty", "Reply outline appears once the email is read."));
+      // The user is literally reading it, so Gmail has flipped it to read —
+      // pick that up now instead of waiting for the next bulk refresh.
+      body.appendChild(el("div", "ea-empty", "Generating reply outline…"));
+      generateOutlineNow(email.emailId);
     }
+  }
 
-    panel.classList.remove("ea-hidden");
+  const readFlipAttempted = new Set();
+  async function generateOutlineNow(emailId) {
+    if (readFlipAttempted.has(emailId)) return;
+    readFlipAttempted.add(emailId);
+    const result = await EmailAgent.refreshEmail(emailId);
+    if (emailId !== currentEmailId) return;
+    if (result?.ok) {
+      render(result.data);
+    } else {
+      showMessage("Couldn't refresh this email — check the backend logs.");
+    }
   }
 
   async function expand(emailId, button, sec) {
@@ -175,12 +225,94 @@
     sec.appendChild(box);
   }
 
+  // --- Inbox tab: the agent-sorted list ---------------------------------------
+  // Mirrors the server's sort semantics (api/filters.py): unknowns last,
+  // ties broken by importance.
+  function sortedEmails() {
+    const emails = EmailAgent.allEmails();
+    const byImportance = (a, b) => (b.importanceScore ?? -1) - (a.importanceScore ?? -1);
+    if (inboxSort === "newest") {
+      return emails.sort((a, b) => new Date(b.receivedAt) - new Date(a.receivedAt));
+    }
+    if (inboxSort === "category") {
+      return emails.sort((a, b) => {
+        if (!a.category && !b.category) return byImportance(a, b);
+        if (!a.category) return 1;
+        if (!b.category) return -1;
+        return a.category.localeCompare(b.category) || byImportance(a, b);
+      });
+    }
+    if (inboxSort === "effort") {
+      return emails.sort((a, b) => {
+        const ra = EFFORT_RANK[a.replyEffort] ?? 3;
+        const rb = EFFORT_RANK[b.replyEffort] ?? 3;
+        return ra - rb || byImportance(a, b);
+      });
+    }
+    return emails.sort(byImportance);
+  }
+
+  function renderInbox() {
+    if (!panel) return;
+    const wrap = panel.querySelector(".ea-panel-inbox");
+    wrap.replaceChildren();
+
+    const bar = el("div", "ea-inbox-bar");
+    const select = document.createElement("select");
+    select.className = "ea-select";
+    for (const [value, label] of [
+      ["importance", "Sort: importance"],
+      ["effort", "Sort: effort (quick first)"],
+      ["category", "Sort: category"],
+      ["newest", "Sort: newest"],
+    ]) {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = label;
+      option.selected = value === inboxSort;
+      select.appendChild(option);
+    }
+    select.addEventListener("change", () => {
+      inboxSort = select.value;
+      renderInbox();
+    });
+    bar.appendChild(select);
+    wrap.appendChild(bar);
+
+    const emails = sortedEmails();
+    if (!emails.length) {
+      wrap.appendChild(el("div", "ea-empty", "No processed emails yet — is the backend running?"));
+      return;
+    }
+    const list = el("div", "ea-inbox-list");
+    for (const email of emails.slice(0, 100)) {
+      const row = el("button", "ea-inbox-row");
+      const chips = el("span", "ea-inbox-row-chips");
+      chips.appendChild(levelBadge(email));
+      if (email.replyEffort) chips.appendChild(el("span", "ea-chip ea-chip-effort", email.replyEffort));
+      if (email.category) chips.appendChild(el("span", "ea-chip", email.category));
+      row.appendChild(chips);
+      row.appendChild(el("span", "ea-inbox-subject", email.subject || "(no subject)"));
+      row.appendChild(el("span", "ea-inbox-sender", email.sender || ""));
+      row.addEventListener("click", () => {
+        // Gmail still resolves legacy hex thread ids in the location hash.
+        location.hash = `#all/${email.threadId}`;
+        setTab("email");
+      });
+      list.appendChild(row);
+    }
+    wrap.appendChild(list);
+  }
+
   // --- track which message is open -------------------------------------------
   async function sync() {
+    ensurePanel();
     const nodes = document.querySelectorAll("[data-legacy-message-id]");
     if (!nodes.length) {
-      currentEmailId = null;
-      panel?.classList.add("ea-hidden");
+      if (currentEmailId !== null) {
+        currentEmailId = null;
+        showMessage("Open an email to see its analysis — or use the Inbox tab.");
+      }
       return;
     }
     const emailId = nodes[nodes.length - 1].getAttribute("data-legacy-message-id");
@@ -207,8 +339,8 @@
     }
   }
 
-  // New mail the pipeline hasn't seen yet: trigger a backend refresh
-  // (ingest + process) and re-ask, once per message id per page load.
+  // New mail the pipeline hasn't seen: fetch + process just this message,
+  // once per message id per page load.
   const refreshAttempted = new Set();
   async function refreshAndRetry(emailId) {
     if (refreshAttempted.has(emailId)) {
@@ -216,14 +348,13 @@
       return;
     }
     refreshAttempted.add(emailId);
-    showMessage("New email — processing it now… (this can take a minute)");
-    await EmailAgent.refreshPipeline();
+    showMessage("New email — processing it now…");
+    const result = await EmailAgent.refreshEmail(emailId);
     if (emailId !== currentEmailId) return; // user moved on while we worked
-    const retry = await EmailAgent.getDetail(emailId);
-    if (retry?.ok) {
-      render(retry.data);
+    if (result?.ok) {
+      render(result.data);
     } else {
-      showMessage("This email couldn't be processed — check the backend logs.");
+      showMessage(result?.data?.detail || "This email couldn't be processed — check the backend logs.");
     }
   }
 
