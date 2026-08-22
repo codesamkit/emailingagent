@@ -1,0 +1,11 @@
+.venv/
+.git/
+__pycache__/
+*.pyc
+.pytest_cache/
+frontend/
+valence-frontend/
+node_modules/
+*.db
+token*.json
+client_secret_*.json

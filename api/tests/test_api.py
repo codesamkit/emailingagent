@@ -229,6 +229,36 @@ class TestEditOutline:
         assert client.patch("/api/emails/nope/outline", json={"outline": ["x"]}).status_code == 404
 
 
+class TestAuth:
+    """Local dev (no API_TOKEN set) must keep working unauthenticated — the
+    `client` fixture already exercises that implicitly. This covers what
+    happens once a deployment sets API_TOKEN, without needing a second
+    fixture: monkeypatch the env var per-test."""
+
+    def test_no_token_configured_is_a_noop(self, client):
+        """The baseline every other test in this file relies on."""
+        assert client.get("/api/health").status_code == 200
+
+    def test_rejects_missing_token_once_configured(self, client, monkeypatch):
+        monkeypatch.setenv("API_TOKEN", "secret")
+        assert client.get("/api/health").status_code == 401
+
+    def test_rejects_wrong_token(self, client, monkeypatch):
+        monkeypatch.setenv("API_TOKEN", "secret")
+        response = client.get("/api/health", headers={"Authorization": "Bearer wrong"})
+        assert response.status_code == 401
+
+    def test_accepts_correct_token(self, client, monkeypatch):
+        monkeypatch.setenv("API_TOKEN", "secret")
+        response = client.get("/api/health", headers={"Authorization": "Bearer secret"})
+        assert response.status_code == 200
+
+    def test_index_page_never_requires_a_token(self, client, monkeypatch):
+        """The page shell must load so its own JS can prompt for a token."""
+        monkeypatch.setenv("API_TOKEN", "secret")
+        assert client.get("/").status_code == 200
+
+
 class TestIndexPage:
     def test_root_serves_the_review_ui(self, client):
         response = client.get("/")

@@ -18,3 +18,6 @@ token_gmail.json
 
 # Local SQLite storage
 ingestion/data/
+
+# Gmail add-on: per-developer Apps Script project link
+gmail-addon/.clasp.json

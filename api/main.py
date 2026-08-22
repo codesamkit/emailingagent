@@ -14,16 +14,18 @@ that stays out of the product until it is explicitly built and gated.
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import Body, FastAPI, HTTPException, Query
+from fastapi import Body, Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
 from models.schema import ReplyOutlineStatus
 from pipeline import persist
 
+from .auth import require_token
 from .filters import SORT_FIELDS, apply_filters, sort_emails
 from .serializers import email_to_json, emails_to_json
 
@@ -40,17 +42,21 @@ app = FastAPI(
 
 # The frontend runs on a different port in dev. Origins are an explicit list
 # rather than "*" so that turning this into a deployed app later is a config
-# change, not a security review.
+# change, not a security review. EXTRA_ORIGINS (comma-separated) adds the
+# deployed Valence origin once one exists — the Gmail add-on itself doesn't
+# need an entry here, since Apps Script's UrlFetchApp isn't a browser and
+# isn't subject to CORS.
 DEV_ORIGINS = [
     "http://localhost:3000",
     "http://localhost:5173",
     "http://127.0.0.1:3000",
     "http://127.0.0.1:5173",
 ]
+EXTRA_ORIGINS = [o.strip() for o in os.environ.get("EXTRA_ORIGINS", "").split(",") if o.strip()]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=DEV_ORIGINS,
+    allow_origins=DEV_ORIGINS + EXTRA_ORIGINS,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PATCH", "OPTIONS"],
     allow_headers=["*"],
@@ -69,7 +75,7 @@ def index() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
 
 
-@app.get("/api/health")
+@app.get("/api/health", dependencies=[Depends(require_token)])
 def health() -> Dict[str, Any]:
     """Liveness plus enough state to debug an empty-looking UI."""
     try:
@@ -79,7 +85,7 @@ def health() -> Dict[str, Any]:
     return {"status": "ok", "processedEmails": total}
 
 
-@app.get("/api/emails")
+@app.get("/api/emails", dependencies=[Depends(require_token)])
 def list_emails(
     readStatus: Optional[str] = Query(None, pattern="^(read|unread)$"),
     importance: Optional[str] = Query(None, pattern="^(low|medium|high|urgent)$"),
@@ -118,7 +124,7 @@ def list_emails(
     }
 
 
-@app.get("/api/emails/{email_id}")
+@app.get("/api/emails/{email_id}", dependencies=[Depends(require_token)])
 def get_email(email_id: str) -> Dict[str, Any]:
     """One email in full: processed fields, calendar context, and the
     original message text from `raw_email` (null if that row is gone,
@@ -135,7 +141,7 @@ def get_email(email_id: str) -> Dict[str, Any]:
     return payload
 
 
-@app.patch("/api/emails/{email_id}/outline")
+@app.patch("/api/emails/{email_id}/outline", dependencies=[Depends(require_token)])
 def edit_outline(
     email_id: str,
     outline: List[str] = Body(..., embed=True),
@@ -168,7 +174,7 @@ def edit_outline(
     return email_to_json(persist.get(email_id, DB_PATH), include_calendar=True)
 
 
-@app.post("/api/emails/{email_id}/expand")
+@app.post("/api/emails/{email_id}/expand", dependencies=[Depends(require_token)])
 def expand_draft(email_id: str) -> Dict[str, Any]:
     """Expand an approved outline into full prose.
 
@@ -191,7 +197,7 @@ def expand_draft(email_id: str) -> Dict[str, Any]:
         raise HTTPException(status_code=501, detail=str(exc))
 
 
-@app.get("/api/stats")
+@app.get("/api/stats", dependencies=[Depends(require_token)])
 def stats() -> Dict[str, Any]:
     """Counts the review UI shows above the list."""
     emails = persist.all_processed(DB_PATH)
