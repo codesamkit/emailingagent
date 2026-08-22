@@ -44,7 +44,7 @@ Work is split across 3 people to minimize merge conflicts. Everyone shares one f
 ### Integration checkpoints
 1. **Checkpoint 0** — all 3 agree on `models/schema.py` + `interfaces/README.md` together (pair, don't parallelize), merge and tag; everyone branches from it.
 2. Each person works on their own branch (`track-a-ingestion`, `track-b-classification`, `track-c-drafting`), touching only their owned folders.
-3. **Checkpoint 1** — Track A's real ingestion output replaces Track B/C's mocks, as its own small integration PR.
+3. **Checkpoint 1** — Track A's real ingestion/calendar output **and** Track B's real classification/scoring/summarization output replace Track C's mocks, as its own small integration PR. Phase 6 needs both tracks' real output, not just Track A's — don't start Phase 6 until Tracks A and B are both merged.
 4. **Checkpoint 2** — Track C's Phase 6 pipeline wires all three tracks together end-to-end; PR touches only `/pipeline/` and imports from others.
 5. Run CI/tests after every merge to `main`, not just before.
 6. Rule of thumb: if a PR would touch a file outside your own folder, stop and coordinate — that's a sign the ownership split needs discussion, not a merge.

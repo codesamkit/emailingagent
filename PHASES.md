@@ -22,8 +22,9 @@ This doc only contains the **run order** (who runs which phase, when) and the **
 | 3 | **Person B** (Track B) | After Phase 2 |
 | 4 | **Person B** (Track B) | After Phase 3 |
 | 5 | **Person C** (Track C) | After Phase 0; parallel with Tracks A/B, develops against fixtures |
-| 6 | **Person C** (Track C) | After **Checkpoint 1** (Track A's real data replaces Track B/C fixtures) |
-| 7 | **Person C** (Track C) | After Phase 6 |
+| 6 | **Person C** (Track C) | After **Checkpoint 1** — needs **both** Track A's and Track B's real output replacing the fixtures, not just Track A |
+| 7 (scaffolding) | **Person C** (Track C) | Can start right after Phase 5, in parallel with Track A/B finishing up — UI shell + filters against Phase 5's fixture data, no real pipeline wiring yet |
+| 7 (wired) | **Person C** (Track C) | After Phase 6 — swap fixture data for the real pipeline output |
 | 8 | **All 3**, each on their own track | After Phases 1–7 are merged |
 
 Full ownership map, per-track file lists, and the integration checkpoint rules are in `CONTEXT.md` — read that before Phase 0.
@@ -210,7 +211,7 @@ Do not touch any folder outside /drafting/.
 ```
 
 ### Phase 6 — Orchestration Pipeline
-**Runs as: Person C only.** Owned files: `/pipeline/`. Runs after **Checkpoint 1** (Track A's real ingestion output has replaced Track B/C's fixtures).
+**Runs as: Person C only.** Owned files: `/pipeline/`. Runs after **Checkpoint 1** — both Track A's real ingestion/calendar output *and* Track B's real classification/scoring/summarization output have replaced the fixtures. Don't start this on Track A's output alone; the pipeline wires in both tracks.
 
 ```
 Build the end-to-end pipeline that imports from all other tracks (import only — don't
@@ -230,7 +231,7 @@ own PR touching only /pipeline/.
 ```
 
 ### Phase 7 — Output / Review Interface
-**Runs as: Person C only.** Owned files: `/interface/`.
+**Runs as: Person C only.** Owned files: `/interface/`. **Scaffolding can start right after Phase 5** (in parallel with Track A/B finishing up and Phase 6 being built) — build the UI shell and filters against Phase 5's fixture data, then swap in Phase 6's real pipeline output once it's ready instead of waiting idle for Phase 6 to fully land.
 
 ```
 Build a simple interface (CLI or minimal web view — propose one) showing:
