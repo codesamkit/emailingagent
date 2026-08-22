@@ -107,6 +107,10 @@ def cmd_compare(args: argparse.Namespace) -> int:
                     value["score"], value["level"], _truncate(value["justification"], 44))
             elif args.stage == "classify":
                 rendered = "{0!s:<6} {1}".format(value[0], _truncate(value[1], 54))
+            elif args.stage == "summarize":
+                summary, dates = value
+                dates_note = "  [dates: {0}]".format(", ".join(dates)) if dates else ""
+                rendered = _truncate(summary, 62 - len(dates_note)) + dates_note
             else:
                 rendered = _truncate(value, 62)
             print("  {0:<10} {1}".format(provider, rendered))

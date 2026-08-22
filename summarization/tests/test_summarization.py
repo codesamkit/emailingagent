@@ -89,15 +89,27 @@ class _FakeClient:
 
 class TestSummarize(unittest.TestCase):
     def test_parses_structured_response(self):
-        fake_client = _FakeClient({"summary": "Jordan recaps Q3 planning and asks three questions."})
+        fake_client = _FakeClient({
+            "summary": "Jordan recaps Q3 planning and asks three questions.",
+            "dates": ["Friday, August 28th"],
+        })
         email = make_email(body=LONG_BODY)
 
-        result = summarize.summarize(email, client=fake_client)
+        summary, dates = summarize.summarize(email, client=fake_client)
 
-        self.assertEqual(result, "Jordan recaps Q3 planning and asks three questions.")
+        self.assertEqual(summary, "Jordan recaps Q3 planning and asks three questions.")
+        self.assertEqual(dates, ["Friday, August 28th"])
+
+    def test_no_dates_mentioned_returns_empty_list_not_none(self):
+        fake_client = _FakeClient({"summary": "Wants to grab lunch Friday.", "dates": []})
+        email = make_email(sender="pat@example.com", subject="Lunch?", body=SHORT_BODY)
+
+        _, dates = summarize.summarize(email, client=fake_client)
+
+        self.assertEqual(dates, [])
 
     def test_prompt_includes_sender_subject_and_body(self):
-        fake_client = _FakeClient({"summary": "Wants to grab lunch Friday."})
+        fake_client = _FakeClient({"summary": "Wants to grab lunch Friday.", "dates": []})
         email = make_email(sender="pat@example.com", subject="Lunch?", body=SHORT_BODY)
 
         summarize.summarize(email, client=fake_client)
@@ -135,8 +147,9 @@ class TestSummarizeBatch(unittest.TestCase):
                             "ready for the September launch, and reminds the team that Q4 "
                             "headcount requests are due Friday, August 28th."
                         ),
+                        "dates": ["Friday, August 28th"],
                     },
-                    {"email_id": "short1", "summary": "Pat asks if the recipient is free for lunch Friday."},
+                    {"email_id": "short1", "summary": "Pat asks if the recipient is free for lunch Friday.", "dates": []},
                 ]
             }
         )
@@ -144,8 +157,9 @@ class TestSummarizeBatch(unittest.TestCase):
         result = batch.summarize_batch([long_email, short_email], client=fake_client)
 
         self.assertEqual(set(result.keys()), {"long1", "short1"})
-        self.assertIn("August 28th", result["long1"])
-        self.assertIn("lunch", result["short1"].lower())
+        self.assertIn("August 28th", result["long1"][0])
+        self.assertIn("lunch", result["short1"][0].lower())
+        self.assertEqual(result["long1"][1], ["Friday, August 28th"])
         # Single call covers both emails since batch_size (20) isn't exceeded.
         self.assertEqual(len(fake_client.messages.calls), 1)
         sent_message = fake_client.messages.calls[0]["messages"][0]["content"]
@@ -155,16 +169,25 @@ class TestSummarizeBatch(unittest.TestCase):
     def test_chunks_calls_when_batch_size_exceeded(self):
         emails = [make_email(email_id=f"e{i}") for i in range(5)]
         payloads = [
-            {"summaries": [{"email_id": "e0", "summary": "s0"}, {"email_id": "e1", "summary": "s1"}]},
-            {"summaries": [{"email_id": "e2", "summary": "s2"}, {"email_id": "e3", "summary": "s3"}]},
-            {"summaries": [{"email_id": "e4", "summary": "s4"}]},
+            {"summaries": [
+                {"email_id": "e0", "summary": "s0", "dates": []},
+                {"email_id": "e1", "summary": "s1", "dates": []},
+            ]},
+            {"summaries": [
+                {"email_id": "e2", "summary": "s2", "dates": []},
+                {"email_id": "e3", "summary": "s3", "dates": []},
+            ]},
+            {"summaries": [{"email_id": "e4", "summary": "s4", "dates": []}]},
         ]
         fake_client = _FakeClient(payloads)
 
         result = batch.summarize_batch(emails, client=fake_client, batch_size=2)
 
         self.assertEqual(len(fake_client.messages.calls), 3)
-        self.assertEqual(result, {"e0": "s0", "e1": "s1", "e2": "s2", "e3": "s3", "e4": "s4"})
+        self.assertEqual(
+            result,
+            {"e0": ("s0", []), "e1": ("s1", []), "e2": ("s2", []), "e3": ("s3", []), "e4": ("s4", [])},
+        )
 
     def test_same_summary_instructions_as_single_summarize(self):
         # Ensures batch.py didn't fork its own copy of the factual/no-inference

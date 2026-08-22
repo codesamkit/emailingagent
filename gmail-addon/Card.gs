@@ -51,6 +51,11 @@ function buildEmailCard_(data) {
   if (data.summary) {
     overview.addWidget(CardService.newTextParagraph().setText(data.summary));
   }
+  if (data.mentionedDates && data.mentionedDates.length) {
+    overview.addWidget(
+      CardService.newKeyValue().setTopLabel('Dates mentioned').setContent(data.mentionedDates.join(', '))
+    );
+  }
   card.addSection(overview);
 
   if (

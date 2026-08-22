@@ -30,9 +30,9 @@ INSERT INTO processed_email (
     email_id, thread_id, sender, subject, received_at, read_status,
     is_no_reply, no_reply_reason,
     importance_score, importance_level, importance_justification,
-    summary, is_scheduling_related, calendar_context,
+    summary, mentioned_dates, is_scheduling_related, calendar_context,
     reply_outline, reply_outline_status, processed_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(email_id) DO UPDATE SET
     thread_id                = excluded.thread_id,
     sender                   = excluded.sender,
@@ -45,6 +45,7 @@ ON CONFLICT(email_id) DO UPDATE SET
     importance_level         = excluded.importance_level,
     importance_justification = excluded.importance_justification,
     summary                  = excluded.summary,
+    mentioned_dates          = excluded.mentioned_dates,
     is_scheduling_related    = excluded.is_scheduling_related,
     calendar_context         = excluded.calendar_context,
     reply_outline            = excluded.reply_outline,
@@ -146,6 +147,7 @@ def _to_row(email: ProcessedEmail, processed_at: Optional[datetime]) -> tuple:
         email.importance_level.value if email.importance_level else None,
         email.importance_justification,
         email.summary,
+        json.dumps(email.mentioned_dates) if email.mentioned_dates is not None else None,
         None if email.is_scheduling_related is None else int(email.is_scheduling_related),
         _encode_calendar_context(email.calendar_context),
         json.dumps(email.reply_outline) if email.reply_outline is not None else None,
@@ -174,6 +176,9 @@ def _row_to_email(row: sqlite3.Row) -> ProcessedEmail:
         ),
         importance_justification=row["importance_justification"],
         summary=row["summary"],
+        mentioned_dates=(
+            json.loads(row["mentioned_dates"]) if row["mentioned_dates"] is not None else None
+        ),
         is_scheduling_related=_flag("is_scheduling_related"),
         calendar_context=_decode_calendar_context(row["calendar_context"]),
         reply_outline=json.loads(row["reply_outline"]) if row["reply_outline"] else None,

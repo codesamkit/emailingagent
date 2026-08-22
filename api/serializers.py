@@ -70,6 +70,7 @@ def email_to_json(email: ProcessedEmail, include_calendar: bool = False) -> Dict
         "importanceLevel": email.importance_level.value if email.importance_level else None,
         "importanceJustification": email.importance_justification,
         "summary": email.summary,
+        "mentionedDates": email.mentioned_dates or [],
         "isSchedulingRelated": email.is_scheduling_related,
         "hasCalendarContext": email.calendar_context is not None,
         "calendarContext": calendar_to_json(email.calendar_context) if include_calendar else None,

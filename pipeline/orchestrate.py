@@ -164,9 +164,9 @@ class Pipeline:
                 record.importance_justification,
             ) = scored
 
-        summary = self._run_stage("summarize", raw.email_id, self._summarize, raw)
-        if summary is not None:
-            record.summary = summary
+        summarized = self._run_stage("summarize", raw.email_id, self._summarize, raw)
+        if summarized is not None:
+            record.summary, record.mentioned_dates = summarized
 
         gate = self._run_stage("scheduling", raw.email_id, self._scheduling_gate, raw)
         if gate is not None:

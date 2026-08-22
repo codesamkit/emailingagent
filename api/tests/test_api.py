@@ -41,7 +41,7 @@ def client(tmp_path, monkeypatch):
         [
             email("read-eligible", reply_outline=["Existing bullet"],
                   reply_outline_status=ReplyOutlineStatus.SUGGESTED, importance_score=90.0,
-                  importance_level=ImportanceLevel.URGENT),
+                  importance_level=ImportanceLevel.URGENT, mentioned_dates=["Friday, Aug 28"]),
             email("unread", read_status=ReadStatus.UNREAD, importance_score=70.0,
                   importance_level=ImportanceLevel.HIGH),
             email("no-reply", is_no_reply=True, no_reply_reason="no-reply@ pattern",
@@ -164,6 +164,14 @@ class TestEligibilityIsServerComputed:
 
 
 class TestGetEmail:
+    def test_includes_mentioned_dates(self, client):
+        assert client.get("/api/emails/read-eligible").json()["mentionedDates"] == ["Friday, Aug 28"]
+
+    def test_mentioned_dates_defaults_to_empty_list_not_null(self, client):
+        """None (never summarized) must serialize as [], not null — the
+        frontend shouldn't need to null-check before checking .length."""
+        assert client.get("/api/emails/unread").json()["mentionedDates"] == []
+
     def test_includes_calendar_context(self, client):
         body = client.get("/api/emails/scheduling").json()
         assert body["calendarContext"] is not None

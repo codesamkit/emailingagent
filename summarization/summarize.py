@@ -8,7 +8,7 @@ deadline (if any). No inferred action items beyond what's stated/implied.
 from __future__ import annotations
 
 import json
-from typing import Any, Optional
+from typing import Any, List, Optional, Tuple
 
 from models.schema import RawEmail
 
@@ -24,7 +24,11 @@ SUMMARY_INSTRUCTIONS = (
     "(if anything) is being asked of the recipient, and any deadline "
     "mentioned. Be strictly factual — base the summary only on what is "
     "explicitly stated or clearly implied in the email text. Do not infer "
-    "action items, intentions, or urgency beyond what the email itself says."
+    "action items, intentions, or urgency beyond what the email itself says. "
+    "Separately, list any dates or deadlines mentioned in the email exactly "
+    "as stated (e.g. \"Friday, Aug 28\", \"by EOD Thursday\") — do not "
+    "resolve relative dates, guess a year, or convert to another format. "
+    "Empty list if none are mentioned."
 )
 
 SYSTEM_PROMPT = (
@@ -39,8 +43,15 @@ RESPONSE_SCHEMA = {
     "properties": {
         # ~3 sentences; also structurally holds the 1-3 sentence spec.
         "summary": {"type": "string", "maxLength": 450},
+        # Bounded the same way summary is — a repetition loop inside the
+        # array becomes structurally impossible, not just discouraged.
+        "dates": {
+            "type": "array",
+            "items": {"type": "string", "maxLength": 60},
+            "maxItems": 5,
+        },
     },
-    "required": ["summary"],
+    "required": ["summary", "dates"],
     "additionalProperties": False,
 }
 
@@ -63,8 +74,9 @@ def _get_default_client() -> Any:
     return get_client("summarize")
 
 
-def summarize(email: RawEmail, client: Optional[Any] = None) -> str:
-    """Returns a 1-3 sentence factual summary via a single Claude API call."""
+def summarize(email: RawEmail, client: Optional[Any] = None) -> Tuple[str, List[str]]:
+    """Returns (1-3 sentence factual summary, dates mentioned verbatim) via a
+    single Claude API call — the dates cost no extra request."""
 
     if client is None:
         client = _get_default_client()
@@ -79,4 +91,4 @@ def summarize(email: RawEmail, client: Optional[Any] = None) -> str:
 
     text = next(block.text for block in response.content if block.type == "text")
     data = json.loads(text)
-    return str(data["summary"])
+    return str(data["summary"]), [str(d) for d in data["dates"]]

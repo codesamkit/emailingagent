@@ -34,7 +34,7 @@ def full_pipeline(**overrides) -> Pipeline:
     defaults = dict(
         classify=lambda e: (False, "personal sender"),
         score=lambda e, nr: (72.5, ImportanceLevel.HIGH, "direct ask"),
-        summarize=lambda e: "Dana needs the Q3 figures.",
+        summarize=lambda e: ("Dana needs the Q3 figures.", ["Friday"]),
         scheduling_gate=lambda e: False,
         calendar_context=lambda s, t: CalendarContext(range_start=s, range_end=t),
         outline=lambda p, r: (["Confirm the figures"], ReplyOutlineStatus.SUGGESTED),
@@ -51,6 +51,7 @@ class TestHappyPath:
         assert result.importance_score == 72.5
         assert result.importance_level == ImportanceLevel.HIGH
         assert result.summary == "Dana needs the Q3 figures."
+        assert result.mentioned_dates == ["Friday"]
         assert result.is_scheduling_related is False
         assert result.reply_outline == ["Confirm the figures"]
         assert result.reply_outline_status == ReplyOutlineStatus.SUGGESTED
@@ -144,7 +145,7 @@ class TestGracefulDegradation:
         def flaky(email):
             if email.email_id == "b":
                 raise RuntimeError("boom")
-            return "ok"
+            return ("ok", [])
 
         results = full_pipeline(summarize=flaky).process(
             [raw("a"), raw("b"), raw("c")], now=NOW)
@@ -176,7 +177,7 @@ class TestPartialStages:
         called = []
         pipeline = full_pipeline(
             classify=lambda e: called.append("classify") or (False, "x"),
-            summarize=lambda e: called.append("summarize") or "s",
+            summarize=lambda e: called.append("summarize") or ("s", []),
             stages=("summarize",),
         )
         pipeline.process_one(raw(), now=NOW)
@@ -225,6 +226,7 @@ class TestPersistenceRoundTrip:
         assert back.importance_score == result.importance_score
         assert back.importance_level == ImportanceLevel.HIGH
         assert back.summary == result.summary
+        assert back.mentioned_dates == ["Friday"]
         assert back.reply_outline == ["Confirm the figures"]
         assert back.reply_outline_status == ReplyOutlineStatus.SUGGESTED
         assert back.read_status == ReadStatus.READ
@@ -245,12 +247,13 @@ class TestPersistenceRoundTrip:
         assert back.is_scheduling_related is None
         assert back.importance_score is None
         assert back.summary is None
+        assert back.mentioned_dates is None
 
     def test_upsert_refreshes_rather_than_duplicating(self, tmp_path):
         db_path = tmp_path / "t.db"
         first = full_pipeline().process_one(raw(), now=NOW)
         persist.upsert([first], db_path)
-        second = full_pipeline(summarize=lambda e: "updated").process_one(raw(), now=NOW)
+        second = full_pipeline(summarize=lambda e: ("updated", [])).process_one(raw(), now=NOW)
         persist.upsert([second], db_path)
         assert persist.count(db_path) == 1
         assert persist.get("e1", db_path).summary == "updated"

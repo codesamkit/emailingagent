@@ -37,6 +37,7 @@ def complete(email_id="e1", read_status=ReadStatus.UNREAD, **overrides) -> Proce
         importance_score=60.0, importance_level=ImportanceLevel.MEDIUM,
         importance_justification="direct ask",
         summary="A short summary.",
+        mentioned_dates=[],
         is_scheduling_related=False,
         reply_outline=None,
         reply_outline_status=ReplyOutlineStatus.NONE,
@@ -146,6 +147,12 @@ class TestReadStatusFlipReprocessing:
 class TestPartialRecords:
     def test_missing_summary_reruns_only_summarize(self):
         assert incremental.stages_for(raw(), complete(summary=None)) == ("summarize",)
+
+    def test_summary_present_but_dates_never_backfilled_reruns_summarize(self):
+        """A row summarized before mentioned_dates existed must not look
+        'done' forever just because summary is set."""
+        record = complete(mentioned_dates=None)
+        assert incremental.stages_for(raw(), record) == ("summarize",)
 
     def test_missing_score_reruns_only_score(self):
         assert incremental.stages_for(raw(), complete(importance_score=None)) == ("score",)

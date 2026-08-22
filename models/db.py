@@ -70,6 +70,7 @@ CREATE TABLE IF NOT EXISTS processed_email (
     importance_justification TEXT,
 
     summary                  TEXT,
+    mentioned_dates          TEXT,          -- JSON array of date strings, verbatim
 
     is_scheduling_related    INTEGER,
     calendar_context         TEXT,          -- JSON blob of CalendarContext
@@ -96,7 +97,12 @@ MIGRATIONS: Dict[str, Sequence[Tuple[str, str]]] = {
             "ALTER TABLE raw_email ADD COLUMN recipients TEXT NOT NULL DEFAULT '[]'",
         ),
     ),
-    "processed_email": (),
+    "processed_email": (
+        (
+            "mentioned_dates",
+            "ALTER TABLE processed_email ADD COLUMN mentioned_dates TEXT",
+        ),
+    ),
 }
 
 

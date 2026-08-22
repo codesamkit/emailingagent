@@ -119,6 +119,9 @@ class ProcessedEmail:
 
     # Track B — summarization (summarization/summarize.py)
     summary: Optional[str] = None
+    # Dates/deadlines exactly as stated in the email (no parsing/inference) —
+    # None until summarized, [] once summarized if none were mentioned.
+    mentioned_dates: Optional[list[str]] = None
 
     # Track A — scheduling gate + calendar (calendar/scheduling_intent.py, calendar/context.py)
     is_scheduling_related: Optional[bool] = None

@@ -429,6 +429,11 @@ function tags(email) {
   if (email.readStatus === "unread") t.push('<span class="tag unread">unread</span>');
   if (email.isNoReply) t.push('<span class="tag noreply">no-reply</span>');
   if (email.isSchedulingRelated) t.push('<span class="tag sched">scheduling</span>');
+  if (email.mentionedDates && email.mentionedDates.length) {
+    const extra = email.mentionedDates.length > 1 ? " +" + (email.mentionedDates.length - 1) : "";
+    t.push('<span class="tag date" title="' + esc(email.mentionedDates.join(", ")) + '">' +
+           esc(email.mentionedDates[0]) + extra + "</span>");
+  }
   if (email.replyOutline) t.push('<span class="tag outline">outline ' + esc(email.replyOutlineStatus) + "</span>");
   return t.join("");
 }

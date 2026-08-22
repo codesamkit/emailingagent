@@ -45,6 +45,11 @@ def stages_for(
         if getattr(existing, field) is None
     ]
 
+    if existing.summary is not None and existing.mentioned_dates is None:
+        # A row summarized before mentioned_dates existed — back-fill it
+        # rather than treating "summary is set" as "fully summarized".
+        due.append("summarize")
+
     read_flipped = ReadStatus(raw.read_status) != ReadStatus(existing.read_status)
     if read_flipped:
         # Only eligibility changed. Classification, score, and summary are
