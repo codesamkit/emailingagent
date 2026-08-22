@@ -72,32 +72,74 @@ def summarize_batch(emails: list[RawEmail]) -> dict[str, str]:
 
 ## Calendar (Track A) → produces `calendar_context`
 
+> **Package is `calendaring/`, not `calendar/`.** A top-level package named
+> `calendar` shadows the standard library's `calendar` module, which
+> `http.cookiejar` imports (`from calendar import timegm`); that breaks
+> `requests` and therefore `google-auth`'s transport. Renamed in Phase 1B.
+
 ```python
-# calendar/scheduling_intent.py
+# calendaring/scheduling_intent.py
 def is_scheduling_related(email: RawEmail) -> bool:
     """Cheap keyword/intent check — no Calendar API call. Gate that decides
     whether get_calendar_context/suggest_available_slots are worth calling
     at all for this email. Imported directly by Track C's drafting module."""
 
-# calendar/context.py
+# calendaring/context.py
 def get_calendar_context(
     range_start: datetime,
     range_end: datetime,
+    *,
+    service=None,                       # additive: injection for tests
+    calendar_ids: list[str] | None = None,   # additive: multi-calendar
+    days: int | None = None,            # additive: default-window shorthand
 ) -> CalendarContext:
     """Free/busy blocks + existing events for the given window. Does not
     set suggested_slots — that's suggest_available_slots' job."""
 
-# calendar/suggest.py
+# calendaring/suggest.py
 def suggest_available_slots(
     duration_minutes: int,
     range_start: datetime,
     range_end: datetime,
     working_hours: tuple[int, int] = (9, 17),
+    *,
+    context: CalendarContext | None = None,  # additive: reuse fetched data
+    service=None,
+    calendar_ids: list[str] | None = None,
+    max_slots: int | None = None,
+    include_weekends: bool | None = None,
+    timezone_name: str | None = None,
+    now: datetime | None = None,
 ) -> list[CalendarSlot]:
     """2-3 proposed open slots within working_hours, given free/busy data
     for the range. Returns [] if nothing fits — caller decides fallback
     messaging (e.g. outline bullet says "no open slots found this week")."""
+
+# calendaring/suggest.py — convenience for the pipeline
+def suggest_for_context(
+    context: CalendarContext,
+    duration_minutes: int | None = None,
+    **kwargs,
+) -> CalendarContext:
+    """Fills context.suggested_slots in place and returns it."""
 ```
+
+### Notes on the additive parameters
+
+All the keyword-only parameters above were **added** in Phase 1B; the
+positional signatures are unchanged, so anything built against the Phase 0
+contract still works.
+
+The one that matters for Track C is `context=`. The pipeline has already
+populated `ProcessedEmail.calendar_context` by the time drafting runs, so
+passing it reuses that data instead of paying for a second `freebusy.query`
+per email:
+
+```python
+slots = suggest_available_slots(30, context=processed.calendar_context)
+```
+
+Working hours are interpreted in the **calendar's own timezone**, not UTC.
 
 ## Drafting (Track C) → produces `reply_outline`
 
@@ -113,7 +155,7 @@ def generate_reply_outline(
       - else                           -> generate outline bullets,
                                            (bullets, ReplyOutlineStatus.SUGGESTED)
     When processed.is_scheduling_related is True, calls
-    calendar.suggest.suggest_available_slots (via processed.calendar_context,
+    calendaring.suggest.suggest_available_slots (via processed.calendar_context,
     already populated by the pipeline) and folds the slots into a bullet
     instead of letting the LLM guess availability."""
 

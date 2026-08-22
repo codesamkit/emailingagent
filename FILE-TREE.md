@@ -26,14 +26,30 @@ aiagent/
 │   └── tests/
 │       └── test_fetch.py          # pagination, rate-limit backoff, header extraction
 │
-├── calendar/                      # Track A — Person 1 (Phase 1B)
-│   ├── calendar_auth.py           # OAuth (freebusy + events.list, read-only)
+├── calendaring/                   # Track A — Person 1 (Phase 1B)
+│   │                              # NOT `calendar/` — that name shadows the stdlib
+│   │                              # `calendar` module and breaks requests/google-auth
+│   ├── config.py                  # scopes, token path, window + working-hour defaults
+│   ├── calendar_auth.py           # OAuth (freebusy + events.list read; events write
+│   │                              # scope requested early, no write code path)
+│   ├── retry.py                   # thin adapter over ingestion/backoff.py (one retry
+│   │                              # policy in the repo, not two)
+│   ├── timeutils.py               # RFC-3339 parsing, interval merge/subtract, tz-aware
+│   │                              # working-hour windows — pure, no I/O
 │   ├── context.py                 # get_calendar_context(range)
 │   ├── suggest.py                 # suggest_available_slots(duration, range, working_hours)
 │   ├── scheduling_intent.py       # is_scheduling_related(email)
-│   ├── cli.py                     # test command against a fake scheduling email
+│   ├── samples.py                 # hardcoded sample emails + canned free/busy,
+│   │                              # shared by the CLI's --offline mode and the tests
+│   ├── cli.py                     # auth / intent / context / slots / demo
+│   ├── README.md
 │   └── tests/
-│       └── test_scheduling_intent.py  # keyword/intent cases for is_scheduling_related
+│       ├── fakes.py               # scripted Calendar service double — no network
+│       ├── test_scheduling_intent.py  # keyword/intent cases for is_scheduling_related
+│       ├── test_timeutils.py      # interval math, tz correctness
+│       ├── test_context.py        # freebusy/events parsing, pagination, degradation
+│       ├── test_suggest.py        # slot fitting, working hours, weekends, lead time
+│       └── test_cli.py            # every command, offline
 │
 ├── classification/                # Track B — Person 2 (Phase 2)
 │   ├── rules.py                   # sender-pattern + header-based no-reply rules
@@ -79,7 +95,7 @@ aiagent/
 ```
 
 ## Ownership quick reference
-- **Track A (Person 1):** `/ingestion/`, `/calendar/`, initial `models/schema.py` draft
+- **Track A (Person 1):** `/ingestion/`, `/calendaring/`, initial `models/schema.py` draft
 - **Track B (Person 2):** `/classification/`, `/scoring/`, `/summarization/`
 - **Track C (Person 3):** `/drafting/`, `/pipeline/`, `/interface/`
 - **Shared, frozen after Phase 0:** `/models/`, `/interfaces/`
@@ -90,5 +106,21 @@ aiagent/
   and `processed_email`. Without a shared module, both tracks would independently write
   near-identical connection/schema code — a DRY violation per CLAUDE.md's development
   practices. This is a small addition to the frozen contract; flag before further changes.
-- Added `tests/` folders to `ingestion/`, `calendar/`, and `pipeline/` for consistency with
+- Added `tests/` folders to `ingestion/`, `calendaring/`, and `pipeline/` for consistency with
   `classification/`, `scoring/`, `summarization/`, and `drafting/`, which already had them.
+
+## Adjustments made in Phase 1B
+- **`calendar/` renamed to `calendaring/`.** A top-level package named `calendar`
+  shadows the standard library's `calendar` module. `http.cookiejar` does
+  `from calendar import timegm` at import time, so the shadow breaks `requests`,
+  which breaks `google-auth`'s transport — surfacing as a misleading
+  "The requests library is not installed". Reproduced against this repo's venv
+  before renaming. `interfaces/README.md` was updated to match.
+- Added `config.py`, `retry.py`, `timeutils.py`, and `samples.py` to the calendar
+  module. `retry.py` deliberately wraps `ingestion/backoff.py` rather than
+  reimplementing a second retry policy, and `samples.py` is shared by the CLI's
+  offline mode and the test suite instead of each defining its own fixtures
+  (DRY, per CLAUDE.md).
+- `timeutils.py` exists so the parts most likely to harbor bugs — RFC-3339
+  offsets, all-day dates, overlapping busy blocks, timezone-correct working
+  hours — are pure functions testable without any API client.
