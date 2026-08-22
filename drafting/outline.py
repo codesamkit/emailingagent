@@ -12,6 +12,7 @@ works (no separate "regenerate" function needed).
 
 from __future__ import annotations
 
+import logging
 import os
 
 from models.schema import ProcessedEmail, RawEmail, ReadStatus, ReplyOutlineStatus
@@ -19,6 +20,8 @@ from models.schema import ProcessedEmail, RawEmail, ReadStatus, ReplyOutlineStat
 from .calendar_aware import fold_calendar_slots_into_outline
 
 _ANTHROPIC_MODEL = "claude-sonnet-5"
+
+log = logging.getLogger(__name__)
 
 
 def generate_reply_outline(
@@ -30,9 +33,11 @@ def generate_reply_outline(
     """
     if processed.is_no_reply:
         # No-reply always wins, even if the email is manually marked read.
+        log.debug("email_id=%s: no outline (no-reply)", processed.email_id)
         return None, ReplyOutlineStatus.NOT_APPLICABLE
 
     if processed.read_status != ReadStatus.READ:
+        log.debug("email_id=%s: no outline (unread)", processed.email_id)
         return None, ReplyOutlineStatus.NONE
 
     prompt = _build_prompt(processed, raw)
@@ -40,7 +45,9 @@ def generate_reply_outline(
 
     if processed.is_scheduling_related and processed.calendar_context is not None:
         outline = fold_calendar_slots_into_outline(outline, processed.calendar_context)
+        log.debug("email_id=%s: folded calendar slots into outline", processed.email_id)
 
+    log.debug("email_id=%s: generated %d-bullet outline", processed.email_id, len(outline))
     return outline, ReplyOutlineStatus.SUGGESTED
 
 

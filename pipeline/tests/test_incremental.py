@@ -104,3 +104,41 @@ def test_raises_when_email_was_never_processed(tmp_path):
         reprocess_on_read_status_change(
             "missing-email", ReadStatus.READ, db_path=tmp_path / "processed.db", raw_db_path=tmp_path / "raw.db"
         )
+
+
+def test_flipping_read_back_to_unread_clears_a_suggested_outline(tmp_path, stub_llm):
+    """Edge case (Phase 8): per the schema's own invariant (reply_outline is
+    non-None only when read_status==READ and is_no_reply is False), marking
+    a previously-read email unread again must clear its outline - even one
+    the user had already customized (EDITED) - not just leave it stale."""
+    raw_db = tmp_path / "raw.db"
+    processed_db = tmp_path / "processed.db"
+
+    upsert_emails([make_ingested("email-1", "read")], db_path=raw_db)
+    edited = make_processed("email-1", ReadStatus.READ)
+    edited.reply_outline = ["A custom bullet the user wrote"]
+    edited.reply_outline_status = ReplyOutlineStatus.EDITED
+    upsert_processed_email(edited, db_path=processed_db)
+
+    result = reprocess_on_read_status_change(
+        "email-1", ReadStatus.UNREAD, db_path=processed_db, raw_db_path=raw_db
+    )
+
+    assert result.reply_outline is None
+    assert result.reply_outline_status == ReplyOutlineStatus.NONE
+    assert stub_llm == []  # unread never calls the LLM
+
+
+def test_reprocessing_the_same_change_twice_is_idempotent(tmp_path, stub_llm):
+    raw_db = tmp_path / "raw.db"
+    processed_db = tmp_path / "processed.db"
+
+    upsert_emails([make_ingested("email-1", "unread")], db_path=raw_db)
+    upsert_processed_email(make_processed("email-1", ReadStatus.UNREAD), db_path=processed_db)
+
+    first = reprocess_on_read_status_change("email-1", ReadStatus.READ, db_path=processed_db, raw_db_path=raw_db)
+    second = reprocess_on_read_status_change("email-1", ReadStatus.READ, db_path=processed_db, raw_db_path=raw_db)
+
+    assert first.reply_outline == second.reply_outline == ["Acknowledge the request"]
+    assert first.reply_outline_status == second.reply_outline_status == ReplyOutlineStatus.SUGGESTED
+    assert len(stub_llm) == 2  # each call regenerates fresh - no unwanted caching either

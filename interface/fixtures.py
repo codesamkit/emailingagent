@@ -74,6 +74,21 @@ def demo_processed_emails() -> list[ProcessedEmail]:
             reply_outline_status=ReplyOutlineStatus.SUGGESTED,
         ),
         ProcessedEmail(
+            email_id="demo-stale",
+            thread_id="thread-eligible",  # same thread as demo-eligible, received earlier
+            sender="alex@example.com",
+            subject="Re: Can you take a look at the proposal?",
+            received_at=_NOW.replace(hour=8),
+            read_status=ReadStatus.READ,
+            is_no_reply=False,
+            importance_score=70.0,
+            importance_level=ImportanceLevel.HIGH,
+            importance_justification="Direct ask from a frequent correspondent.",
+            summary="Alex's first message asking for a proposal review.",
+            reply_outline=["Acknowledge the request", "Confirm you'll review by Friday"],
+            reply_outline_status=ReplyOutlineStatus.SUGGESTED,
+        ),
+        ProcessedEmail(
             email_id="demo-scheduling",
             thread_id="thread-scheduling",
             sender="sam@example.com",

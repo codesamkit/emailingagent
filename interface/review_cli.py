@@ -20,18 +20,20 @@ from typing import Optional
 
 from drafting.expand import expand_outline_to_full_draft
 from models.schema import ImportanceLevel, ProcessedEmail, ReadStatus, ReplyOutlineStatus
+from pipeline.staleness import find_stale_outlines
 
 from .fixtures import demo_processed_emails
 from .filters import by_importance, by_no_reply, by_read_status, by_scheduling_related, sorted_by_importance
 
 NO_REPLY_BADGE = "No-Reply — informational only"
+STALE_OUTLINE_WARNING = "⚠ stale — a newer message has arrived in this thread"
 
 _OUTLINE_PLACEHOLDER = {
     ReplyOutlineStatus.NONE: "Unread — no outline yet",
     ReplyOutlineStatus.NOT_APPLICABLE: "No-Reply — no response needed",
 }
 
-LIST_COLUMNS = ("importance", "read?", "sender", "subject", "no-reply?", "scheduling?", "has outline?")
+LIST_COLUMNS = ("importance", "read?", "sender", "subject", "no-reply?", "scheduling?", "has outline?", "stale?")
 
 
 def load_emails(db_path: Optional[Path]) -> list[ProcessedEmail]:
@@ -55,7 +57,7 @@ def apply_filters(emails: list[ProcessedEmail], args: argparse.Namespace) -> lis
     return emails
 
 
-def _row(email: ProcessedEmail) -> tuple[str, ...]:
+def _row(email: ProcessedEmail, stale_ids: frozenset[str]) -> tuple[str, ...]:
     return (
         email.importance_level.value if email.importance_level else "-",
         "yes" if email.read_status == ReadStatus.READ else "no",
@@ -64,11 +66,12 @@ def _row(email: ProcessedEmail) -> tuple[str, ...]:
         "yes" if email.is_no_reply else "no",
         "yes" if email.is_scheduling_related else "no",
         "yes" if email.reply_outline is not None else "no",
+        "yes" if email.email_id in stale_ids else "no",
     )
 
 
-def print_table(emails: list[ProcessedEmail]) -> None:
-    rows = [_row(e) for e in emails]
+def print_table(emails: list[ProcessedEmail], stale_ids: frozenset[str] = frozenset()) -> None:
+    rows = [_row(e, stale_ids) for e in emails]
     widths = [
         max(len(LIST_COLUMNS[i]), *(len(r[i]) for r in rows)) if rows else len(LIST_COLUMNS[i])
         for i in range(len(LIST_COLUMNS))
@@ -90,13 +93,15 @@ def format_outline_section(email: ProcessedEmail) -> str:
     return f"  ({_OUTLINE_PLACEHOLDER.get(email.reply_outline_status, 'No outline')})"
 
 
-def print_detail(email: ProcessedEmail) -> None:
+def print_detail(email: ProcessedEmail, stale_ids: frozenset[str] = frozenset()) -> None:
     print(f"From: {email.sender}")
     print(f"Subject: {email.subject}")
     if email.is_no_reply:
         print(NO_REPLY_BADGE)
     print(f"Importance: {email.importance_level.value if email.importance_level else '-'}")
     print(f"Summary: {email.summary or '(no summary)'}")
+    if email.email_id in stale_ids:
+        print(STALE_OUTLINE_WARNING)
     print(f"Reply outline [{email.reply_outline_status.value}]:")
     print(format_outline_section(email))
 
@@ -158,20 +163,25 @@ def main(argv: Optional[list[str]] = None) -> None:
     parser = build_parser()
     args = parser.parse_args(argv)
 
-    emails = apply_filters(load_emails(args.db), args)
+    all_emails = load_emails(args.db)
+    # Staleness needs the full thread picture, so it's computed before
+    # filtering narrows the list down - a filtered-out newer message
+    # should still count toward marking an older one stale.
+    stale_ids = frozenset(e.email_id for e in find_stale_outlines(all_emails))
+    emails = apply_filters(all_emails, args)
 
     try:
         if args.command == "show":
-            print_detail(find_email(emails, args.email_id))
+            print_detail(find_email(emails, args.email_id), stale_ids)
         elif args.command == "edit":
             email = find_email(emails, args.email_id)
             edit_outline(email, args.bullets)
             print(f"Updated outline for {email.email_id} (status: {email.reply_outline_status.value})")
-            print_detail(email)
+            print_detail(email, stale_ids)
         elif args.command == "expand":
             print(expand_to_full_draft(args.email_id))
         else:
-            print_table(sorted_by_importance(emails))
+            print_table(sorted_by_importance(emails), stale_ids)
     except (KeyError, ValueError) as exc:
         parser.exit(1, f"Error: {exc}\n")
 

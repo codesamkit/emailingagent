@@ -16,7 +16,7 @@ from drafting import outline as outline_module
 from ingestion.models import RawEmail as IngestedRawEmail
 from models.schema import CalendarContext, CalendarSlot, ImportanceLevel, ReplyOutlineStatus
 from pipeline import orchestrate as orchestrate_module
-from pipeline.orchestrate import process_email
+from pipeline.orchestrate import process_email, process_inbox
 
 
 def make_ingested(**overrides) -> IngestedRawEmail:
@@ -117,3 +117,86 @@ def test_process_email_never_gets_outline_for_no_reply_even_when_read(monkeypatc
     assert processed.reply_outline is None
     assert processed.reply_outline_status == ReplyOutlineStatus.NOT_APPLICABLE
     assert llm_calls == []
+
+
+# --- Phase 8: graceful degradation on API failures --------------------
+
+
+def test_scoring_failure_degrades_to_unscored_instead_of_crashing(monkeypatch):
+    monkeypatch.setattr(orchestrate_module, "is_scheduling_related", lambda email: False)
+
+    def flaky_score_importance(email, is_no_reply, client=None):
+        raise RuntimeError("scoring API down")
+
+    monkeypatch.setattr(orchestrate_module, "score_importance", flaky_score_importance)
+
+    processed = process_email(make_ingested())
+
+    assert processed.importance_score is None
+    assert processed.importance_level is None
+    # everything downstream of scoring still completes normally
+    assert processed.summary == "Alex wants a sync."
+    assert processed.reply_outline == ["Acknowledge the request"]
+
+
+def test_summarization_failure_degrades_to_pending_placeholder(monkeypatch):
+    monkeypatch.setattr(orchestrate_module, "is_scheduling_related", lambda email: False)
+
+    def flaky_summarize(email, client=None):
+        raise RuntimeError("summarization API down")
+
+    monkeypatch.setattr(orchestrate_module, "summarize", flaky_summarize)
+
+    processed = process_email(make_ingested())
+
+    assert processed.summary == "(summary pending)"
+    assert processed.importance_score == 80.0  # unaffected
+    assert processed.reply_outline == ["Acknowledge the request"]  # outline still generates
+
+
+def test_calendar_context_failure_degrades_to_no_slot_suggestions(monkeypatch):
+    monkeypatch.setattr(orchestrate_module, "is_scheduling_related", lambda email: True)
+
+    def flaky_get_calendar_context(range_start, range_end, service=None):
+        raise RuntimeError("Calendar API rate limited")
+
+    monkeypatch.setattr(orchestrate_module, "get_calendar_context", flaky_get_calendar_context)
+
+    processed = process_email(make_ingested())
+
+    assert processed.is_scheduling_related is True
+    assert processed.calendar_context is None
+    # outline still generates, just without a calendar-derived slot bullet
+    assert processed.reply_outline == ["Acknowledge the request"]
+
+
+def test_process_inbox_skips_one_failing_email_without_aborting_the_batch(monkeypatch, tmp_path):
+    import ingestion.fetch as ingestion_fetch_module
+    import ingestion.store as ingestion_store_module
+    import pipeline.persist as persist_module
+
+    good = make_ingested(email_id="good-1")
+    bad = make_ingested(email_id="bad-1")
+
+    monkeypatch.setattr(orchestrate_module, "is_scheduling_related", lambda email: False)
+
+    def flaky_classify(email):
+        if email.email_id == "bad-1":
+            raise RuntimeError("classification service unavailable")
+        return False, "personal sender"
+
+    monkeypatch.setattr(orchestrate_module, "classify_no_reply", flaky_classify)
+    monkeypatch.setattr(
+        ingestion_fetch_module, "fetch_recent_emails", lambda service, limit: iter([good, bad])
+    )
+    monkeypatch.setattr(ingestion_store_module, "upsert_emails", lambda emails, db_path=None: None)
+
+    persisted = []
+    monkeypatch.setattr(
+        persist_module, "upsert_processed_email", lambda processed, db_path=None: persisted.append(processed)
+    )
+
+    result = process_inbox(limit=2, processed_db_path=tmp_path / "processed.db", raw_db_path=tmp_path / "raw.db")
+
+    assert [p.email_id for p in result] == ["good-1"]
+    assert [p.email_id for p in persisted] == ["good-1"]

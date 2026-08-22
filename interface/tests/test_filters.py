@@ -14,7 +14,7 @@ def test_by_read_status_filters_unread_only():
 def test_by_importance_filters_exact_level():
     emails = demo_processed_emails()
     result = by_importance(emails, ImportanceLevel.HIGH)
-    assert {e.email_id for e in result} == {"demo-eligible", "demo-scheduling"}
+    assert {e.email_id for e in result} == {"demo-eligible", "demo-scheduling", "demo-stale"}
 
 
 def test_by_no_reply_filters_flagged_only():
