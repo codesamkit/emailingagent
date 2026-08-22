@@ -179,6 +179,26 @@ class TestGetEmail:
     def test_unknown_id_is_404(self, client):
         assert client.get("/api/emails/nope").status_code == 404
 
+    def test_detail_includes_original_body_from_raw_email(self, client):
+        from ingestion.models import RawEmail
+        from ingestion import store
+
+        store.upsert_emails(
+            [RawEmail(
+                email_id="read-eligible", thread_id="t-read-eligible",
+                sender="Dana <dana@example.com>", recipients=["me@example.com"],
+                subject="Subject read-eligible", body="Hi,\n\nOriginal message text.",
+                received_at=NOW, read_status=ReadStatus.READ,
+            )],
+            main.DB_PATH,
+        )
+        body = client.get("/api/emails/read-eligible").json()
+        assert body["body"] == "Hi,\n\nOriginal message text."
+
+    def test_detail_body_is_null_when_raw_email_is_gone(self, client):
+        body = client.get("/api/emails/unread").json()
+        assert body["body"] is None
+
 
 class TestEditOutline:
     def test_saves_and_marks_edited(self, client):
@@ -214,7 +234,10 @@ class TestIndexPage:
         response = client.get("/")
         assert response.status_code == 200
         assert "text/html" in response.headers["content-type"]
-        assert "MailDesk" in response.text or "Mail Desk" in response.text
+        # Structural markers, not the product name — the page's branding is
+        # free to change without breaking the API contract.
+        assert 'id="queue"' in response.text
+        assert 'id="detail"' in response.text
 
 
 class TestExpandDraft:

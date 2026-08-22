@@ -84,6 +84,21 @@ def _db(args) -> Optional[Path]:
     return Path(args.db) if args.db else None
 
 
+def _apply_score_spread(db_path) -> int:
+    """Even out importance scores within each level band across the whole
+    inbox (scoring/spread.py). Per-email scoring clusters — similar emails
+    have similar signals — so separation is applied corpus-wide after the
+    fact. Cheap (no LLM), deterministic, idempotent."""
+    from scoring.spread import spread_scores
+
+    rows = persist.all_processed(db_path)
+    before = {e.email_id: e.importance_score for e in rows}
+    changed = [e for e in spread_scores(rows) if before[e.email_id] != e.importance_score]
+    if changed:
+        persist.upsert(changed, db_path)
+    return len(changed)
+
+
 def cmd_process(args: argparse.Namespace) -> int:
     db_path = _db(args)
     raws = store.recent(args.limit or 10_000, db_path)
@@ -111,6 +126,11 @@ def cmd_process(args: argparse.Namespace) -> int:
             print("  {0}  {1}".format(email_id, ", ".join(stages)))
         return 0
     if not plan_map:
+        # Nothing to reprocess, but the spread pass still runs so score
+        # distribution stays even after upgrades or manual row edits.
+        respread = _apply_score_spread(db_path)
+        if respread:
+            print("Score spread  : {0} scores re-mapped".format(respread))
         return 0
 
     todo = [r for r in raws if r.email_id in plan_map]
@@ -136,7 +156,10 @@ def cmd_process(args: argparse.Namespace) -> int:
         written += persist.upsert(results, db_path)
         all_errors.extend(pipeline.errors)
 
+    respread = _apply_score_spread(db_path)
+
     print("Processed     : {0}".format(written))
+    print("Score spread  : {0} scores re-mapped".format(respread))
     print("Total stored  : {0}".format(persist.count(db_path)))
     if all_errors:
         print("\nStage failures ({0}) — these fields stay unset and retry next run:".format(len(all_errors)))
