@@ -15,7 +15,10 @@ from typing import Any, Optional
 
 from models.schema import RawEmail
 
-DEFAULT_MODEL = "claude-opus-5"
+def _default_model() -> str:
+    from llm.client import model_for
+
+    return model_for("classify")
 MAX_BODY_LINES = 5
 MAX_BODY_CHARS = 500
 
@@ -54,9 +57,14 @@ def _build_user_message(email: RawEmail) -> str:
 
 
 def _get_default_client() -> Any:
-    import anthropic
+    """Routed through llm.client so the provider is a config choice.
 
-    return anthropic.Anthropic()
+    See llm/README.md — this stage can run against a local model while
+    others stay on a hosted one.
+    """
+    from llm.client import get_client
+
+    return get_client("classify")
 
 
 def classify_ambiguous(email: RawEmail, client: Optional[Any] = None) -> tuple[bool, str]:
@@ -66,7 +74,7 @@ def classify_ambiguous(email: RawEmail, client: Optional[Any] = None) -> tuple[b
         client = _get_default_client()
 
     response = client.messages.create(
-        model=DEFAULT_MODEL,
+        model=_default_model(),
         max_tokens=256,
         system=SYSTEM_PROMPT,
         messages=[{"role": "user", "content": _build_user_message(email)}],
