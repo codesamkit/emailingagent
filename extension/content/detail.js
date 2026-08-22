@@ -137,6 +137,8 @@
       body.appendChild(sec);
     }
 
+    renderProposedEvent(body, email);
+
     const ctx = email.calendarContext;
     if (ctx) {
       const slots = ctx.suggestedSlots || [];
@@ -183,6 +185,61 @@
       // pick that up now instead of waiting for the next bulk refresh.
       body.appendChild(el("div", "ea-empty", "Generating reply outline…"));
       generateOutlineNow(email.emailId);
+    }
+  }
+
+  // --- proposed calendar event: extracted by the pipeline, created on
+  // Google Calendar ONLY when the user clicks Add here (or in Valence). ----
+  function renderProposedEvent(body, email) {
+    const event = email.proposedEvent;
+    const status = email.proposedEventStatus;
+    if (!event || status === "none" || status === "declined") return;
+
+    const sec = section("Proposed calendar event");
+    const card = el("div", "ea-event-card");
+    card.appendChild(el("div", "ea-event-title", event.title));
+    card.appendChild(el("div", "ea-event-when", formatSlot(event)));
+    if (event.location) card.appendChild(el("div", "ea-text ea-muted", `📍 ${event.location}`));
+    if (event.attendees?.length) {
+      card.appendChild(el("div", "ea-text ea-muted", `With: ${event.attendees.join(", ")}`));
+    }
+    if (event.description) card.appendChild(el("p", "ea-text", event.description));
+
+    if (status === "approved") {
+      card.appendChild(el("div", "ea-event-ok", "✓ On your Google Calendar"));
+    } else {
+      if (status === "failed") {
+        card.appendChild(el("div", "ea-empty", `Creating it failed: ${event.error || "unknown error"}`));
+      }
+      const actions = el("div", "ea-event-actions");
+      const approve = el("button", "ea-button", status === "failed" ? "Retry" : "Add to calendar");
+      const decline = el("button", "ea-button ea-button-quiet", "Dismiss");
+      approve.addEventListener("click", () => decideEvent(email.emailId, "approve", approve, decline));
+      decline.addEventListener("click", () => decideEvent(email.emailId, "decline", approve, decline));
+      actions.appendChild(approve);
+      actions.appendChild(decline);
+      card.appendChild(actions);
+    }
+    sec.appendChild(card);
+    body.appendChild(sec);
+  }
+
+  async function decideEvent(emailId, action, approveBtn, declineBtn) {
+    approveBtn.disabled = declineBtn.disabled = true;
+    approveBtn.textContent = action === "approve" ? "Creating…" : approveBtn.textContent;
+    const result =
+      action === "approve"
+        ? await EmailAgent.approveEvent(emailId)
+        : await EmailAgent.declineEvent(emailId);
+    if (emailId !== currentEmailId) return;
+    if (result?.ok) {
+      render(result.data);
+    } else {
+      // 502 = the Calendar API call failed; the backend already recorded
+      // FAILED, so re-fetch to show the error + Retry state.
+      const detail = await EmailAgent.getDetail(emailId);
+      if (detail?.ok) render(detail.data);
+      else showMessage(result?.data?.detail || "Calendar action failed — check the backend logs.");
     }
   }
 
@@ -291,6 +348,11 @@
       chips.appendChild(levelBadge(email));
       if (email.replyEffort) chips.appendChild(el("span", "ea-chip ea-chip-effort", email.replyEffort));
       if (email.category) chips.appendChild(el("span", "ea-chip", email.category));
+      if (email.proposedEventStatus === "suggested") {
+        const chip = el("span", "ea-chip", "📅 pending");
+        chip.title = "Has a proposed calendar event awaiting your decision";
+        chips.appendChild(chip);
+      }
       row.appendChild(chips);
       row.appendChild(el("span", "ea-inbox-subject", email.subject || "(no subject)"));
       row.appendChild(el("span", "ea-inbox-sender", email.sender || ""));

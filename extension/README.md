@@ -16,6 +16,12 @@ A Manifest V3 extension that surfaces the email agent's output inside Gmail:
 - **Reply effort** — quick / moderate / involved, derived from the reply
   outline's size (`drafting/effort.py`, no LLM call); shown as a chip and
   sortable in both the panel and the Valence review UI.
+- **Calendar events with human approval** — when the pipeline extracts a
+  meeting from a scheduling email, the panel shows the proposed event (title,
+  time, attendees, location) with *Add to calendar* / *Dismiss* buttons.
+  Approving is the only path that writes to Google Calendar, and it only
+  fires on your click; failures show the error with a Retry. Pending
+  proposals get a "📅 pending" chip in the Inbox tab.
 - **Instant outlines** — opening an unread email triggers
   `POST /api/emails/{id}/refresh`, a fast single-message re-fetch that picks
   up the read flip and generates the outline in seconds, instead of waiting

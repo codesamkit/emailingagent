@@ -203,3 +203,18 @@
 }
 
 .ea-empty { color: #5f6368; font-style: italic; margin-top: 8px; }
+
+/* ---- proposed calendar event card ---- */
+
+.ea-event-card {
+  border: 1px solid #dadce0;
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: #f8f9fa;
+}
+
+.ea-event-title { font-weight: 600; }
+.ea-event-when { color: #1a73e8; font-weight: 500; margin: 2px 0 4px; }
+.ea-event-ok { color: #137333; font-weight: 600; margin-top: 6px; }
+.ea-event-actions { display: flex; gap: 6px; }
+.ea-button-quiet { color: #5f6368; }

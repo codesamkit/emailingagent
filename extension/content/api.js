@@ -86,5 +86,11 @@ const EmailAgent = (() => {
       return result;
     },
     expandDraft: (emailId) => call(`/api/emails/${encodeURIComponent(emailId)}/expand`, "POST"),
+    // Human-approval flow for proposed calendar events. Approve is the one
+    // call that writes to Google Calendar — only ever fired by a user click.
+    approveEvent: (emailId) =>
+      call(`/api/emails/${encodeURIComponent(emailId)}/calendar-event/approve`, "POST"),
+    declineEvent: (emailId) =>
+      call(`/api/emails/${encodeURIComponent(emailId)}/calendar-event/decline`, "POST"),
   };
 })();
