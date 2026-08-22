@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional, Sequence, Tuple
 
-from models.schema import ProcessedEmail, RawEmail, ReadStatus
+from models.schema import ProcessedEmail, ProposedEventStatus, RawEmail, ReadStatus
 
 from .orchestrate import STAGES
 
@@ -56,6 +56,15 @@ def stages_for(
 
     if "scheduling" in due or (existing.is_scheduling_related and existing.calendar_context is None):
         due.append("calendar")
+
+    # A row processed before this feature shipped has proposed_event_status
+    # NONE with no calendar re-fetch pending — without this clause it would
+    # never become due, since none of the checks above would fire for it.
+    if "calendar" in due or (
+        existing.is_scheduling_related
+        and existing.proposed_event_status == ProposedEventStatus.NONE
+    ):
+        due.append("propose_event")
 
     # Preserve canonical stage order; the pipeline depends on it.
     return tuple(stage for stage in STAGES if stage in set(due))

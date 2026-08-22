@@ -22,7 +22,13 @@ from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Callable, Dict, Iterable, List, Optional, Sequence
 
-from models.schema import ProcessedEmail, RawEmail, ReadStatus, ReplyOutlineStatus
+from models.schema import (
+    ProcessedEmail,
+    ProposedEventStatus,
+    RawEmail,
+    ReadStatus,
+    ReplyOutlineStatus,
+)
 
 log = logging.getLogger(__name__)
 
@@ -35,8 +41,14 @@ STAGES: Sequence[str] = (
     "categorize",
     "scheduling",
     "calendar",
+    "propose_event",
     "outline",
 )
+
+# Once a proposed event has been acted on, a re-run must never regenerate or
+# overwrite it — APPROVED may already carry a live google_event_id, and
+# DECLINED is a recorded user decision, not a value the pipeline owns.
+_TERMINAL_EVENT_STATUSES = (ProposedEventStatus.APPROVED, ProposedEventStatus.DECLINED)
 
 
 class StageError(Exception):
@@ -72,6 +84,7 @@ class Pipeline:
         categorize: Optional[Callable] = None,
         scheduling_gate: Optional[Callable] = None,
         calendar_context: Optional[Callable] = None,
+        propose_event: Optional[Callable] = None,
         outline: Optional[Callable] = None,
         stages: Optional[Sequence[str]] = None,
         calendar_window_days: int = 7,
@@ -82,6 +95,7 @@ class Pipeline:
         self._categorize = categorize
         self._scheduling_gate = scheduling_gate
         self._calendar_context = calendar_context
+        self._propose_event = propose_event
         self._outline = outline
         self.stages = tuple(stages if stages is not None else STAGES)
         self.calendar_window_days = calendar_window_days
@@ -98,6 +112,7 @@ class Pipeline:
         libraries just to read a stored row.
         """
         from calendaring.context import get_calendar_context
+        from calendaring.propose import extract_proposed_event
         from calendaring.scheduling_intent import is_scheduling_related
         from classification.categorize import categorize_topic
         from classification.classify import is_no_reply
@@ -112,6 +127,7 @@ class Pipeline:
             categorize=categorize_topic,
             scheduling_gate=is_scheduling_related,
             calendar_context=get_calendar_context,
+            propose_event=extract_proposed_event,
             outline=generate_reply_outline,
             stages=stages,
             **kwargs,
@@ -191,6 +207,17 @@ class Pipeline:
             )
             if context is not None:
                 record.calendar_context = context
+
+        if (
+            record.is_scheduling_related
+            and "propose_event" in self.stages
+            and record.proposed_event_status not in _TERMINAL_EVENT_STATUSES
+        ):
+            proposed = self._run_stage(
+                "propose_event", raw.email_id, self._propose_event, record, raw
+            )
+            if proposed is not None:
+                record.proposed_event, record.proposed_event_status = proposed
 
         outlined = self._run_stage(
             "outline", raw.email_id, self._outline, record, raw

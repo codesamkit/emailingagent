@@ -13,7 +13,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from models.schema import CalendarContext, CalendarSlot, ProcessedEmail
+from models.schema import CalendarContext, CalendarSlot, ProcessedEmail, ProposedEvent
 
 
 def _iso(value: Optional[datetime]) -> Optional[str]:
@@ -46,6 +46,21 @@ def calendar_to_json(context: Optional[CalendarContext]) -> Optional[Dict[str, A
     }
 
 
+def proposed_event_to_json(event: Optional[ProposedEvent]) -> Optional[Dict[str, Any]]:
+    if event is None:
+        return None
+    return {
+        "title": event.title,
+        "start": _iso(event.start),
+        "end": _iso(event.end),
+        "attendees": event.attendees,
+        "location": event.location,
+        "description": event.description,
+        "googleEventId": event.google_event_id,
+        "error": event.error,
+    }
+
+
 def email_to_json(email: ProcessedEmail, include_calendar: bool = False) -> Dict[str, Any]:
     """One processed email as the frontend sees it.
 
@@ -75,6 +90,8 @@ def email_to_json(email: ProcessedEmail, include_calendar: bool = False) -> Dict
         "isSchedulingRelated": email.is_scheduling_related,
         "hasCalendarContext": email.calendar_context is not None,
         "calendarContext": calendar_to_json(email.calendar_context) if include_calendar else None,
+        "proposedEvent": proposed_event_to_json(email.proposed_event),
+        "proposedEventStatus": email.proposed_event_status.value,
         "replyOutline": email.reply_outline,
         "replyOutlineStatus": email.reply_outline_status.value,
         "replyEffort": reply_effort(email),

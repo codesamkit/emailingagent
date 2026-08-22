@@ -563,12 +563,65 @@ async function select(id) {
         `<li>${new Date(s.start).toLocaleString([], {weekday:"short", month:"short", day:"numeric", hour:"numeric", minute:"2-digit"})}
          – ${new Date(s.end).toLocaleTimeString([], {hour:"numeric", minute:"2-digit"})}</li>`).join("")}</ul></div>` : ""}
 
+    ${e.proposedEvent ? `<div class="section"><h3>Proposed calendar event</h3><div id="proposedEventArea"></div></div>` : ""}
+
     <div class="section"><h3>Reply outline</h3><div id="outlineArea"></div></div>
     <div class="section" id="draftSection" hidden><h3>Full draft (review before sending)</h3>
       <div class="draft" id="draftText"></div>
       <div class="actions"><button class="btn" id="copyDraft">Copy draft</button></div></div>
   </div>`;
+  if (e.proposedEvent) renderProposedEvent(e);
   renderOutline(e);
+}
+
+function proposedEventTimeRange(ev) {
+  return `${new Date(ev.start).toLocaleString([], {weekday:"short", month:"short", day:"numeric", hour:"numeric", minute:"2-digit"})}
+    – ${new Date(ev.end).toLocaleTimeString([], {hour:"numeric", minute:"2-digit"})}`;
+}
+
+function renderProposedEvent(e) {
+  const area = document.getElementById("proposedEventArea");
+  const ev = e.proposedEvent;
+  const details = `
+    <p class="d-from"><strong>${esc(ev.title)}</strong><br>
+      ${proposedEventTimeRange(ev)}
+      ${ev.location ? `<br>${esc(ev.location)}` : ""}
+      ${ev.attendees.length ? `<br>With: ${esc(ev.attendees.join(", "))}` : ""}</p>`;
+
+  if (e.proposedEventStatus === "approved") {
+    area.innerHTML = `${details}<p class="saved">Created on your calendar.</p>`;
+    return;
+  }
+  if (e.proposedEventStatus === "declined") {
+    area.innerHTML = `${details}<p class="note">Declined.</p>`;
+    return;
+  }
+
+  const failed = e.proposedEventStatus === "failed";
+  area.innerHTML = `${details}
+    ${failed ? `<p class="error">Could not create this event${ev.error ? ": " + esc(ev.error) : ""}.</p>` : ""}
+    <div class="actions">
+      <button class="btn primary" id="approveEvent">${failed ? "Retry" : "Approve"}</button>
+      <button class="btn" id="declineEvent">Decline</button>
+    </div><div id="proposedEventMsg"></div>`;
+  document.getElementById("approveEvent").addEventListener("click", () => decideCalendarEvent(e, "approve"));
+  document.getElementById("declineEvent").addEventListener("click", () => decideCalendarEvent(e, "decline"));
+}
+
+async function decideCalendarEvent(e, action) {
+  const btn = document.getElementById(action === "approve" ? "approveEvent" : "declineEvent");
+  const msg = document.getElementById("proposedEventMsg");
+  btn.disabled = true;
+  try {
+    const r = await fetch("/api/emails/" + e.emailId + "/calendar-event/" + action, { method: "POST" });
+    if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
+    const updated = await r.json();
+    renderProposedEvent(updated);
+    renderQueue();
+  } catch (err) {
+    msg.innerHTML = `<p class="error">${esc(err.message)}</p>`;
+    btn.disabled = false;
+  }
 }
 
 function renderOutline(e) {
