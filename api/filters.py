@@ -18,6 +18,7 @@ def apply_filters(
     emails: List[ProcessedEmail],
     read_status: Optional[str] = None,
     importance: Optional[str] = None,
+    category: Optional[str] = None,
     no_reply: Optional[bool] = None,
     scheduling: Optional[bool] = None,
     has_outline: Optional[bool] = None,
@@ -38,6 +39,12 @@ def apply_filters(
     if importance:
         wanted_level = ImportanceLevel(importance)
         result = [e for e in result if e.importance_level == wanted_level]
+
+    if category:
+        # Topics are free-form but normalized to lowercase at write time;
+        # matching case-insensitively keeps hand-typed queries working too.
+        wanted_topic = category.lower().strip()
+        result = [e for e in result if (e.category or "").lower() == wanted_topic]
 
     if no_reply is not None:
         result = [e for e in result if e.is_no_reply is no_reply]

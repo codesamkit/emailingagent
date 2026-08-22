@@ -16,7 +16,7 @@ OLLAMA = "ollama"
 PROVIDERS = (ANTHROPIC, OLLAMA)
 
 # The stages that can be routed independently. Names match pipeline STAGES.
-ROUTABLE_STAGES = ("classify", "score", "summarize", "outline")
+ROUTABLE_STAGES = ("classify", "score", "summarize", "categorize", "outline")
 
 
 def _clean(value: Optional[str]) -> Optional[str]:

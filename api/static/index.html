@@ -72,6 +72,8 @@
     font-size: 13px;
     line-height: 1.5;
     -webkit-font-smoothing: antialiased;
+    /* column flex so the queue fills whatever the (variable-height) header leaves */
+    display: flex; flex-direction: column;
   }
   button { font: inherit; cursor: default; color: inherit; }
   :focus-visible { outline: 2px solid var(--accent-vivid); outline-offset: 2px; }
@@ -138,15 +140,17 @@
   .bin.active b { color: var(--accent-ink); }
   .bin:not(.active).urgent b { color: var(--urgent); }
   .bin:not(.active).high b { color: var(--accent); }
+  /* topic chips share the bin look; the row only appears once topics exist */
+  .bins.topics { padding-top: 0; }
 
   /* ---------- layout ---------- */
   main {
     display: grid; grid-template-columns: minmax(360px, 44%) 1fr;
-    height: calc(100vh - 96px); min-height: 300px;
+    flex: 1; min-height: 300px;
     background: var(--surface);
   }
   @media (max-width: 900px) {
-    main { grid-template-columns: 1fr; height: auto; }
+    main { grid-template-columns: 1fr; flex: none; min-height: 0; }
     #detail { border-left: none; border-top: 1px solid var(--line); }
   }
 
@@ -326,6 +330,7 @@
     <button class="theme-btn" id="themeBtn" aria-label="Theme: auto" title="Theme: auto"></button>
   </div>
   <div class="bins" id="bins" role="toolbar" aria-label="Filters"></div>
+  <div class="bins topics" id="topics" role="toolbar" aria-label="Topic filters" hidden></div>
 </header>
 
 <main>
@@ -340,7 +345,7 @@ const api = (path) => fetch(path).then(async (r) => {
   return r.json();
 });
 
-const state = { level: null, unreadOnly: false, hideNoReply: false, search: "", selected: null, emails: [], loaded: false };
+const state = { level: null, category: null, unreadOnly: false, hideNoReply: false, search: "", selected: null, emails: [], loaded: false };
 
 /* ---------- theme: auto → dark → light, persisted ---------- */
 const THEME_KEY = "valence-theme";
@@ -408,6 +413,7 @@ function shell(email, big) {
 function tags(email) {
   const t = [];
   if (email.readStatus === "unread") t.push('<span class="tag unread">unread</span>');
+  if (email.category) t.push('<span class="tag topic">' + esc(email.category) + "</span>");
   if (email.isNoReply) t.push('<span class="tag noreply">no-reply</span>');
   if (email.isSchedulingRelated) t.push('<span class="tag sched">scheduling</span>');
   if (email.replyOutline) t.push('<span class="tag outline">outline ' + esc(email.replyOutlineStatus) + "</span>");
@@ -437,6 +443,20 @@ async function renderBins() {
     b.addEventListener("click", () => { state.level = b.dataset.level || null; refresh(); }));
   el.querySelector("#unreadToggle").addEventListener("click", () => { state.unreadOnly = !state.unreadOnly; refresh(); });
   el.querySelector("#noReplyToggle").addEventListener("click", () => { state.hideNoReply = !state.hideNoReply; refresh(); });
+
+  // topic chips — free-form categories, top-N by count; click toggles
+  const topicsEl = document.getElementById("topics");
+  const topics = Object.entries(s.byCategory || {});
+  topicsEl.hidden = !topics.length;
+  topicsEl.innerHTML = topics.map(([topic, n]) =>
+    `<button class="bin ${state.category === topic ? "active" : ""}" data-topic="${esc(topic)}"
+             aria-pressed="${state.category === topic}">
+       <b>${n}</b><span>${esc(topic)}</span></button>`).join("");
+  topicsEl.querySelectorAll("[data-topic]").forEach((b) =>
+    b.addEventListener("click", () => {
+      state.category = state.category === b.dataset.topic ? null : b.dataset.topic;
+      refresh();
+    }));
 }
 
 /* ---------- queue ---------- */
@@ -451,6 +471,7 @@ async function renderQueue() {
   if (!state.loaded) el.innerHTML = skeletons();
   const q = new URLSearchParams({ sortBy: "importance", descending: "true", limit: "500" });
   if (state.level) q.set("importance", state.level);
+  if (state.category) q.set("category", state.category);
   if (state.unreadOnly) q.set("readStatus", "unread");
   if (state.hideNoReply) q.set("noReply", "false");
   if (state.search) q.set("search", state.search);
@@ -458,7 +479,7 @@ async function renderQueue() {
   state.emails = data.emails;
   state.loaded = true;
   if (!data.emails.length) {
-    el.innerHTML = state.search || state.level || state.unreadOnly || state.hideNoReply
+    el.innerHTML = state.search || state.level || state.category || state.unreadOnly || state.hideNoReply
       ? '<div class="empty">Nothing matches these filters.</div>'
       : '<div class="empty">No processed emails yet. Ingest and process first: <code>python -m pipeline.cli process</code></div>';
     return;

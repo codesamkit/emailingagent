@@ -83,6 +83,7 @@ def health() -> Dict[str, Any]:
 def list_emails(
     readStatus: Optional[str] = Query(None, pattern="^(read|unread)$"),
     importance: Optional[str] = Query(None, pattern="^(low|medium|high|urgent)$"),
+    category: Optional[str] = Query(None, max_length=80),  # free-form topic, no pattern
     noReply: Optional[bool] = None,
     scheduling: Optional[bool] = None,
     hasOutline: Optional[bool] = None,
@@ -102,6 +103,7 @@ def list_emails(
         emails,
         read_status=readStatus,
         importance=importance,
+        category=category,
         no_reply=noReply,
         scheduling=scheduling,
         has_outline=hasOutline,
@@ -206,4 +208,19 @@ def stats() -> Dict[str, Any]:
             level: sum(1 for e in emails if e.importance_level and e.importance_level.value == level)
             for level in ("urgent", "high", "medium", "low")
         },
+        "byCategory": _top_categories(emails),
     }
+
+
+def _top_categories(emails, limit: int = 12) -> Dict[str, int]:
+    """Topic -> count for the filter chips, biggest first.
+
+    Topics are free-form, so the UI shows only the most common ones — a
+    long tail of one-off labels would be noise as filters, not signal.
+    """
+    counts: Dict[str, int] = {}
+    for e in emails:
+        if e.category:
+            counts[e.category] = counts.get(e.category, 0) + 1
+    ranked = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    return dict(ranked[:limit])

@@ -41,12 +41,13 @@ def client(tmp_path, monkeypatch):
         [
             email("read-eligible", reply_outline=["Existing bullet"],
                   reply_outline_status=ReplyOutlineStatus.SUGGESTED, importance_score=90.0,
-                  importance_level=ImportanceLevel.URGENT),
+                  importance_level=ImportanceLevel.URGENT, category="team planning"),
             email("unread", read_status=ReadStatus.UNREAD, importance_score=70.0,
-                  importance_level=ImportanceLevel.HIGH),
+                  importance_level=ImportanceLevel.HIGH, category="team planning"),
             email("no-reply", is_no_reply=True, no_reply_reason="no-reply@ pattern",
                   reply_outline_status=ReplyOutlineStatus.NOT_APPLICABLE,
-                  importance_score=10.0, importance_level=ImportanceLevel.LOW),
+                  importance_score=10.0, importance_level=ImportanceLevel.LOW,
+                  category="newsletter"),
             email("scheduling", is_scheduling_related=True, importance_score=60.0,
                   sender="Sam <sam@other.example>", subject="Coffee next week?",
                   calendar_context=CalendarContext(
@@ -76,6 +77,11 @@ class TestHealthAndStats:
         assert body["withOutline"] == 1
         assert body["unprocessed"] == 1
         assert body["byLevel"]["urgent"] == 1
+
+    def test_stats_counts_topics_biggest_first(self, client):
+        body = client.get("/api/stats").json()
+        assert body["byCategory"] == {"team planning": 2, "newsletter": 1}
+        assert list(body["byCategory"]) == ["team planning", "newsletter"]
 
 
 class TestListEmails:
@@ -126,6 +132,22 @@ class TestListEmails:
     def test_filter_by_importance_level(self, client):
         body = client.get("/api/emails?importance=urgent").json()
         assert [e["emailId"] for e in body["emails"]] == ["read-eligible"]
+
+    def test_filter_by_category(self, client):
+        body = client.get("/api/emails?category=newsletter").json()
+        assert [e["emailId"] for e in body["emails"]] == ["no-reply"]
+
+    def test_category_filter_is_case_insensitive(self, client):
+        assert client.get("/api/emails?category=NEWSLETTER").json()["total"] == 1
+
+    def test_category_appears_in_the_list_payload(self, client):
+        body = client.get("/api/emails?category=team+planning").json()
+        assert body["total"] == 2
+        assert all(e["category"] == "team planning" for e in body["emails"])
+
+    def test_uncategorized_emails_have_null_category(self, client):
+        body = client.get("/api/emails/scheduling").json()
+        assert body["category"] is None
 
     def test_search_matches_subject_and_sender(self, client):
         assert client.get("/api/emails?search=coffee").json()["total"] == 1

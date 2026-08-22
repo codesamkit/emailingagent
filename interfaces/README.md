@@ -70,6 +70,21 @@ def summarize_batch(emails: list[RawEmail]) -> dict[str, str]:
     same output contract as calling summarize() on each email individually."""
 ```
 
+## Categorization (Track B) → produces `category`
+
+> Added post-Phase 8 via the append-only schema process: new
+> `ProcessedEmail.category` field and new function, no existing signature
+> changed.
+
+```python
+# classification/categorize.py
+def categorize_topic(email: RawEmail) -> str:
+    """Free-form topic — what the email is about. A short normalized string
+    (lowercase, 1-3 words, e.g. "job application", "order shipping"),
+    "other" when nothing usable comes back. Single LLM call, routable
+    independently as stage "categorize"."""
+```
+
 ## Calendar (Track A) → produces `calendar_context`
 
 > **Package is `calendaring/`, not `calendar/`.** A top-level package named

@@ -37,6 +37,7 @@ def complete(email_id="e1", read_status=ReadStatus.UNREAD, **overrides) -> Proce
         importance_score=60.0, importance_level=ImportanceLevel.MEDIUM,
         importance_justification="direct ask",
         summary="A short summary.",
+        category="team planning",
         is_scheduling_related=False,
         reply_outline=None,
         reply_outline_status=ReplyOutlineStatus.NONE,
@@ -152,6 +153,10 @@ class TestPartialRecords:
 
     def test_missing_classification_reruns_only_classify(self):
         assert incremental.stages_for(raw(), complete(is_no_reply=None)) == ("classify",)
+
+    def test_missing_category_reruns_only_categorize(self):
+        """Rows written before the categorize stage existed get backfilled."""
+        assert incremental.stages_for(raw(), complete(category=None)) == ("categorize",)
 
     def test_several_missing_fields_run_in_canonical_order(self):
         stages = incremental.stages_for(

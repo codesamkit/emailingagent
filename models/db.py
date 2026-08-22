@@ -71,6 +71,8 @@ CREATE TABLE IF NOT EXISTS processed_email (
 
     summary                  TEXT,
 
+    category                 TEXT,
+
     is_scheduling_related    INTEGER,
     calendar_context         TEXT,          -- JSON blob of CalendarContext
 
@@ -96,7 +98,9 @@ MIGRATIONS: Dict[str, Sequence[Tuple[str, str]]] = {
             "ALTER TABLE raw_email ADD COLUMN recipients TEXT NOT NULL DEFAULT '[]'",
         ),
     ),
-    "processed_email": (),
+    "processed_email": (
+        ("category", "ALTER TABLE processed_email ADD COLUMN category TEXT"),
+    ),
 }
 
 

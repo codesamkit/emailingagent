@@ -34,6 +34,7 @@ _COLUMNS = (
     ("LEVEL", 7, lambda e: e.importance_level.value if e.importance_level else "-"),
     ("SENDER", 26, lambda e: e.sender),
     ("SUBJECT", 34, lambda e: e.subject or "(no subject)"),
+    ("TOPIC", 16, lambda e: e.category or "-"),
     ("READ?", 6, lambda e: "read" if e.read_status == ReadStatus.READ else "UNREAD"),
     ("NO-REPLY", 8, lambda e: "yes" if e.is_no_reply else ("-" if e.is_no_reply is not None else "?")),
     ("SCHED", 5, lambda e: "yes" if e.is_scheduling_related else "-"),
@@ -68,6 +69,7 @@ def _print_full(email: ProcessedEmail) -> None:
         print(textwrap.indent(textwrap.fill(email.importance_justification, 70), "  "))
     print("\nsummary:")
     print(textwrap.indent(textwrap.fill(email.summary or "(none)", 70), "  "))
+    print("\ncategory      : {0}".format(email.category or "-"))
     print("\nscheduling    : {0}".format(email.is_scheduling_related))
     if email.calendar_context:
         ctx = email.calendar_context
