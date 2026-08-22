@@ -35,6 +35,7 @@ def full_pipeline(**overrides) -> Pipeline:
         classify=lambda e: (False, "personal sender"),
         score=lambda e, nr: (72.5, ImportanceLevel.HIGH, "direct ask"),
         summarize=lambda e: ("Dana needs the Q3 figures.", ["Friday"]),
+        categorize=lambda e: "team planning",
         scheduling_gate=lambda e: False,
         calendar_context=lambda s, t: CalendarContext(range_start=s, range_end=t),
         outline=lambda p, r: (["Confirm the figures"], ReplyOutlineStatus.SUGGESTED),
@@ -52,6 +53,7 @@ class TestHappyPath:
         assert result.importance_level == ImportanceLevel.HIGH
         assert result.summary == "Dana needs the Q3 figures."
         assert result.mentioned_dates == ["Friday"]
+        assert result.category == "team planning"
         assert result.is_scheduling_related is False
         assert result.reply_outline == ["Confirm the figures"]
         assert result.reply_outline_status == ReplyOutlineStatus.SUGGESTED
@@ -141,6 +143,15 @@ class TestGracefulDegradation:
         assert result.importance_score == 72.5   # everything else survived
         assert result.reply_outline == ["Confirm the figures"]
 
+    def test_categorize_failure_leaves_category_unset(self):
+        def boom(email):
+            raise RuntimeError("API timeout")
+
+        result = full_pipeline(categorize=boom).process_one(raw(), now=NOW)
+        assert result.category is None           # retried next run
+        assert result.summary == "Dana needs the Q3 figures."
+        assert result.reply_outline == ["Confirm the figures"]
+
     def test_one_email_failure_does_not_abort_the_batch(self):
         def flaky(email):
             if email.email_id == "b":
@@ -227,6 +238,7 @@ class TestPersistenceRoundTrip:
         assert back.importance_level == ImportanceLevel.HIGH
         assert back.summary == result.summary
         assert back.mentioned_dates == ["Friday"]
+        assert back.category == "team planning"
         assert back.reply_outline == ["Confirm the figures"]
         assert back.reply_outline_status == ReplyOutlineStatus.SUGGESTED
         assert back.read_status == ReadStatus.READ
@@ -248,6 +260,7 @@ class TestPersistenceRoundTrip:
         assert back.importance_score is None
         assert back.summary is None
         assert back.mentioned_dates is None
+        assert back.category is None
 
     def test_upsert_refreshes_rather_than_duplicating(self, tmp_path):
         db_path = tmp_path / "t.db"

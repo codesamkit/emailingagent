@@ -75,10 +75,17 @@ def _run_summarize(email: RawEmail, client: Any) -> Any:
     return summarize(email, client=client)
 
 
+def _run_categorize(email: RawEmail, client: Any) -> Any:
+    from classification.categorize import categorize_topic
+
+    return categorize_topic(email, client=client)
+
+
 STAGE_RUNNERS: Dict[str, Callable[[RawEmail, Any], Any]] = {
     "classify": _run_classify,
     "score": _run_score,
     "summarize": _run_summarize,
+    "categorize": _run_categorize,
 }
 
 

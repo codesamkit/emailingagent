@@ -89,6 +89,7 @@ def health() -> Dict[str, Any]:
 def list_emails(
     readStatus: Optional[str] = Query(None, pattern="^(read|unread)$"),
     importance: Optional[str] = Query(None, pattern="^(low|medium|high|urgent)$"),
+    category: Optional[str] = Query(None, max_length=80),  # free-form topic, no pattern
     noReply: Optional[bool] = None,
     scheduling: Optional[bool] = None,
     hasOutline: Optional[bool] = None,
@@ -108,6 +109,7 @@ def list_emails(
         emails,
         read_status=readStatus,
         importance=importance,
+        category=category,
         no_reply=noReply,
         scheduling=scheduling,
         has_outline=hasOutline,
@@ -197,6 +199,60 @@ def expand_draft(email_id: str) -> Dict[str, Any]:
         raise HTTPException(status_code=501, detail=str(exc))
 
 
+@app.post("/api/emails/{email_id}/refresh", dependencies=[Depends(require_token)])
+def refresh_email(email_id: str) -> Dict[str, Any]:
+    """Re-fetch one message from Gmail and process what it needs.
+
+    The extension calls this when the user opens a message that is unread or
+    unknown in the database — the read flip unlocks the outline within
+    seconds instead of waiting for the next bulk refresh.
+    """
+    from googleapiclient.errors import HttpError
+
+    from pipeline.refresh import refresh_one
+
+    try:
+        email = refresh_one(email_id, DB_PATH)
+    except HttpError as exc:
+        status = getattr(getattr(exc, "resp", None), "status", None)
+        # Gmail answers 404 for a well-formed unknown id and 400 for a
+        # malformed one — both mean "no such message" to our clients.
+        if status in (400, 404):
+            raise HTTPException(status_code=404, detail="Gmail has no message {0!r}".format(email_id))
+        raise HTTPException(status_code=502, detail="Gmail error: {0}".format(exc))
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail="Gmail auth unavailable: {0}".format(exc))
+    if email is None:
+        raise HTTPException(status_code=404, detail="No processed email {0!r}".format(email_id))
+    # Same shape as GET /api/emails/{id} so clients can swap responses in.
+    return get_email(email_id)
+
+
+@app.post("/api/refresh", dependencies=[Depends(require_token)])
+def refresh_pipeline(ingestLimit: Optional[int] = Query(None, ge=1, le=500)) -> Dict[str, Any]:
+    """Ingest new Gmail messages and process whatever changed.
+
+    Called by the Chrome extension so new mail and read-status flips get
+    picked up without a manual pipeline run. Slow by nature (Gmail fetch +
+    LLM stages); FastAPI runs sync endpoints in a threadpool, so it blocks
+    only its own request. 409 means a refresh is already in flight — callers
+    should wait and re-poll rather than retry.
+    """
+    from pipeline.refresh import RefreshBusyError, refresh
+
+    try:
+        result = refresh(DB_PATH, ingest_limit=ingestLimit)
+    except RefreshBusyError:
+        raise HTTPException(status_code=409, detail="A refresh is already running.")
+    except RuntimeError as exc:
+        # Covers MissingCredentialsError and the non-interactive token failure
+        # from gmail_auth — the fix is a terminal action, not a retry.
+        raise HTTPException(status_code=503, detail="Gmail auth unavailable: {0}".format(exc))
+    # `plan` maps email_id -> stage tuple; useful in logs, noise on the wire.
+    result.pop("plan", None)
+    return result
+
+
 @app.get("/api/stats", dependencies=[Depends(require_token)])
 def stats() -> Dict[str, Any]:
     """Counts the review UI shows above the list."""
@@ -212,4 +268,19 @@ def stats() -> Dict[str, Any]:
             level: sum(1 for e in emails if e.importance_level and e.importance_level.value == level)
             for level in ("urgent", "high", "medium", "low")
         },
+        "byCategory": _top_categories(emails),
     }
+
+
+def _top_categories(emails, limit: int = 12) -> Dict[str, int]:
+    """Topic -> count for the filter chips, biggest first.
+
+    Topics are free-form, so the UI shows only the most common ones — a
+    long tail of one-off labels would be noise as filters, not signal.
+    """
+    counts: Dict[str, int] = {}
+    for e in emails:
+        if e.category:
+            counts[e.category] = counts.get(e.category, 0) + 1
+    ranked = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    return dict(ranked[:limit])

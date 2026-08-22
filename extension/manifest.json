@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "AI Email Agent for Gmail",
+  "version": "0.1.0",
+  "description": "Importance badges, summaries, and reply outlines from your local AI email agent, inside Gmail.",
+  "permissions": ["storage"],
+  "host_permissions": ["http://127.0.0.1/*", "http://localhost/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://mail.google.com/*"],
+      "js": ["content/api.js", "content/inbox.js", "content/detail.js"],
+      "css": ["content/styles.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "options_page": "options.html"
+}

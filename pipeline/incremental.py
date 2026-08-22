@@ -23,6 +23,7 @@ _STAGE_OUTPUT = {
     "classify": "is_no_reply",
     "score": "importance_score",
     "summarize": "summary",
+    "categorize": "category",
     "scheduling": "is_scheduling_related",
 }
 

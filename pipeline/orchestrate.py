@@ -4,7 +4,7 @@ Stage order is fixed and each stage is skippable, because the stages are not
 independent — the reply-outline gate reads `is_no_reply`, and the calendar
 stage only runs when the scheduling gate says so:
 
-    classify -> score -> summarize -> scheduling gate -> calendar -> outline
+    classify -> score -> summarize -> categorize -> scheduling gate -> calendar -> outline
 
 Every stage is wrapped: one email that fails classification must not abort a
 100-email run. A stage failure leaves its field None, which is exactly what
@@ -32,6 +32,7 @@ STAGES: Sequence[str] = (
     "classify",
     "score",
     "summarize",
+    "categorize",
     "scheduling",
     "calendar",
     "outline",
@@ -68,6 +69,7 @@ class Pipeline:
         classify: Optional[Callable] = None,
         score: Optional[Callable] = None,
         summarize: Optional[Callable] = None,
+        categorize: Optional[Callable] = None,
         scheduling_gate: Optional[Callable] = None,
         calendar_context: Optional[Callable] = None,
         outline: Optional[Callable] = None,
@@ -77,6 +79,7 @@ class Pipeline:
         self._classify = classify
         self._score = score
         self._summarize = summarize
+        self._categorize = categorize
         self._scheduling_gate = scheduling_gate
         self._calendar_context = calendar_context
         self._outline = outline
@@ -96,6 +99,7 @@ class Pipeline:
         """
         from calendaring.context import get_calendar_context
         from calendaring.scheduling_intent import is_scheduling_related
+        from classification.categorize import categorize_topic
         from classification.classify import is_no_reply
         from drafting.outline import generate_reply_outline
         from scoring.score import score_importance
@@ -105,6 +109,7 @@ class Pipeline:
             classify=is_no_reply,
             score=score_importance,
             summarize=summarize_one,
+            categorize=categorize_topic,
             scheduling_gate=is_scheduling_related,
             calendar_context=get_calendar_context,
             outline=generate_reply_outline,
@@ -167,6 +172,10 @@ class Pipeline:
         summarized = self._run_stage("summarize", raw.email_id, self._summarize, raw)
         if summarized is not None:
             record.summary, record.mentioned_dates = summarized
+
+        topic = self._run_stage("categorize", raw.email_id, self._categorize, raw)
+        if topic is not None:
+            record.category = topic
 
         gate = self._run_stage("scheduling", raw.email_id, self._scheduling_gate, raw)
         if gate is not None:

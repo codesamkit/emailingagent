@@ -54,6 +54,7 @@ def email_to_json(email: ProcessedEmail, include_calendar: bool = False) -> Dict
     correctness requirement, and re-deriving it in JavaScript would be a
     second place for it to go wrong.
     """
+    from drafting.effort import reply_effort
     from drafting.outline import is_eligible
 
     eligible, _ = is_eligible(email)
@@ -71,11 +72,13 @@ def email_to_json(email: ProcessedEmail, include_calendar: bool = False) -> Dict
         "importanceJustification": email.importance_justification,
         "summary": email.summary,
         "mentionedDates": email.mentioned_dates or [],
+        "category": email.category,
         "isSchedulingRelated": email.is_scheduling_related,
         "hasCalendarContext": email.calendar_context is not None,
         "calendarContext": calendar_to_json(email.calendar_context) if include_calendar else None,
         "replyOutline": email.reply_outline,
         "replyOutlineStatus": email.reply_outline_status.value,
+        "replyEffort": reply_effort(email),
         "outlineEligible": eligible,
         "processedAt": _iso(email.processed_at),
     }

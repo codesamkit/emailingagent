@@ -123,6 +123,11 @@ class ProcessedEmail:
     # None until summarized, [] once summarized if none were mentioned.
     mentioned_dates: Optional[list[str]] = None
 
+    # Track B — topic categorization (classification/categorize.py).
+    # A short free-form lowercase topic (1-3 words, e.g. "job application",
+    # "order shipping"), normalized in code. None until the stage has run.
+    category: Optional[str] = None
+
     # Track A — scheduling gate + calendar (calendar/scheduling_intent.py, calendar/context.py)
     is_scheduling_related: Optional[bool] = None
     calendar_context: Optional[CalendarContext] = None
