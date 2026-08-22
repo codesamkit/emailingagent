@@ -15,7 +15,10 @@ from typing import Any, Optional
 from models.schema import ImportanceLevel, RawEmail
 from scoring.signals import compute_signals, format_signals_for_prompt
 
-DEFAULT_MODEL = "claude-opus-5"
+def _default_model() -> str:
+    from llm.client import model_for
+
+    return model_for("score")
 
 # score >= threshold -> level, checked highest first; else LOW.
 LEVEL_THRESHOLDS: tuple[tuple[float, ImportanceLevel], ...] = (
@@ -65,9 +68,14 @@ def _build_user_message(email: RawEmail, signals: dict[str, Any]) -> str:
 
 
 def _get_default_client() -> Any:
-    import anthropic
+    """Routed through llm.client so the provider is a config choice.
 
-    return anthropic.Anthropic()
+    See llm/README.md — this stage can run against a local model while
+    others stay on a hosted one.
+    """
+    from llm.client import get_client
+
+    return get_client("score")
 
 
 def score_importance(
@@ -83,7 +91,7 @@ def score_importance(
         client = _get_default_client()
 
     response = client.messages.create(
-        model=DEFAULT_MODEL,
+        model=_default_model(),
         max_tokens=512,
         system=SYSTEM_PROMPT,
         messages=[{"role": "user", "content": _build_user_message(email, signals)}],

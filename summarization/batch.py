@@ -15,7 +15,11 @@ import json
 from typing import Any, Optional
 
 from models.schema import RawEmail
-from summarization.summarize import DEFAULT_MODEL, SUMMARY_INSTRUCTIONS, format_email_for_prompt
+from summarization.summarize import (
+    SUMMARY_INSTRUCTIONS,
+    _default_model,
+    format_email_for_prompt,
+)
 
 # Emails per LLM call. Bounds prompt size per call while still amortizing
 # per-call overhead across many emails instead of one call per email.
@@ -50,9 +54,14 @@ RESPONSE_SCHEMA = {
 
 
 def _get_default_client() -> Any:
-    import anthropic
+    """Routed through llm.client so the provider is a config choice.
 
-    return anthropic.Anthropic()
+    See llm/README.md — this stage can run against a local model while
+    others stay on a hosted one.
+    """
+    from llm.client import get_client
+
+    return get_client("summarize")
 
 
 def _build_batch_message(emails: list[RawEmail]) -> str:
@@ -82,7 +91,7 @@ def summarize_batch(
     results: dict[str, str] = {}
     for chunk in _chunk(emails, batch_size):
         response = client.messages.create(
-            model=DEFAULT_MODEL,
+            model=_default_model(),
             max_tokens=256 * len(chunk),
             system=SYSTEM_PROMPT,
             messages=[{"role": "user", "content": _build_batch_message(chunk)}],
