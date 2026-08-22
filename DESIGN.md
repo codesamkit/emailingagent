@@ -43,7 +43,7 @@ Tints via `color-mix(in srgb, …)` — **never `in oklch` against these neutral
 
 Only where it encodes something:
 
-1. **Logo**: nucleus + two crossed elliptical orbits (±60°), one electron each, orbiting via SMIL `animateMotion` (11s/17s); reduced motion swaps to static dots.
+1. **Logo**: nucleus + two concentric circular shells (r 7.5 / 12.5 in a 32-unit viewBox), one electron each, orbiting via SMIL `animateMotion` — inner shell fast (9s), outer slow (17s); reduced motion swaps to static dots.
 2. **Score ring**: importance as an SVG orbital arc — sweep = score/100, terminal dot = the electron's position, stroke = level (urgent red / high blue / medium `ink-soft` / low `ink-faint`). Level label always printed beneath (color is never the only signal).
 3. **Unread charge**: the Mail-style blue dot doubles as the "charged" electron.
 
