@@ -1,7 +1,7 @@
 ## Project Overview
-This repo is building an AI email agent (Gmail + Google Calendar integration) that ranks emails by importance, summarizes them, and generates reply outlines — gated by read status and no-reply detection, calendar-aware for scheduling emails. Full behavior spec and phased build plan: `email-agent-phased-build-prompt.md`. Condensed working summary (schema, track ownership, phase table, design rationale): `context.md`. Proposed target directory layout: `file-tree.md`.
+This repo is building an AI email agent (Gmail + Google Calendar integration) that ranks emails by importance, summarizes them, and generates reply outlines — gated by read status and no-reply detection, calendar-aware for scheduling emails. Full behavior spec and phased build plan: `PHASES.md`. Condensed working summary (schema, track ownership, phase table, design rationale): `CONTEXT.md`. Proposed target directory layout: `FILE-TREE.md`.
 
-Work is split into 3 parallel tracks (Ingestion & Calendar / Classification & Intelligence / Drafting & Orchestration-UI), each owning its own folders, sharing one frozen `models/schema.py` + `interfaces/README.md` contract from Phase 0 onward. See `context.md` for the full ownership map before touching any track's files.
+Work is split into 3 parallel tracks (Ingestion & Calendar / Classification & Intelligence / Drafting & Orchestration-UI), each owning its own folders, sharing one frozen `models/schema.py` + `interfaces/README.md` contract from Phase 0 onward. See `CONTEXT.md` for the full ownership map before touching any track's files.
 
 ## Development Practices
 Always identify and use software development best practices (like DRY) for any code changes. Avoid redundant code where possible. Build reusable components where feasible.

@@ -1,6 +1,6 @@
 # Project Context — AI Email Agent
 
-This file summarizes the phased build plan in `email-agent-phased-build-prompt.md` so future sessions don't need to re-read the full prompt doc for orientation.
+This file summarizes the phased build plan in `PHASES.md` so future sessions don't need to re-read the full prompt doc for orientation.
 
 ## What this project is
 
@@ -90,4 +90,4 @@ Work is split across 3 people to minimize merge conflicts. Everyone shares one f
 
 ## File tree
 
-See `file-tree.md` for the proposed project directory structure derived from the Phase 0 ownership map.
+See `FILE-TREE.md` for the proposed project directory structure derived from the Phase 0 ownership map.

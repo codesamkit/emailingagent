@@ -1,13 +1,13 @@
 # Proposed File Tree — AI Email Agent
 
-Derived from the ownership map and Phase 0 instructions in `email-agent-phased-build-prompt.md`. Nothing below exists yet — this is the target structure to propose/confirm during Phase 0, not a reflection of current repo contents.
+Derived from the ownership map and Phase 0 instructions in `PHASES.md`. Nothing below exists yet — this is the target structure to propose/confirm during Phase 0, not a reflection of current repo contents.
 
 ```
 aiagent/
 ├── CLAUDE.md
-├── context.md
-├── file-tree.md
-├── email-agent-phased-build-prompt.md
+├── CONTEXT.md
+├── FILE-TREE.md
+├── PHASES.md
 │
 ├── models/                        # shared contract — frozen after Phase 0
 │   └── schema.py                  # RawEmail, ProcessedEmail, CalendarContext
