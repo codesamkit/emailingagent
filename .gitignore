@@ -1,6 +1,7 @@
 # Python
 __pycache__/
 *.py[cod]
+*.egg-info/
 .venv/
 venv/
 .pytest_cache/
@@ -11,6 +12,9 @@ venv/
 credentials.json
 client_secret_*.json
 token.json
+token_calendar.json
+token_gmail.json
+.env
 
 # Local SQLite storage
 ingestion/data/
