@@ -37,9 +37,9 @@ Full ownership map, per-track file lists, and the integration checkpoint rules a
 I'm building an AI email agent — see CONTEXT.md in this repo for the full behavior spec,
 schema, and ownership map before doing anything else.
 
-Tech stack: [FILL IN — e.g. Python + FastAPI backend, Gmail API, Google Calendar API,
+Tech stack: Python + FastAPI backend, Gmail API, Google Calendar API,
 Claude API for classification/summarization/drafting, SQLite for local dev storage,
-React frontend later]
+React frontend later.
 
 We are working in phases, split across 3 people working in parallel (see CONTEXT.md's
 ownership map). Stay inside your owned files/folders only. Do not implement future
@@ -90,8 +90,14 @@ through the other two people first (see CONTEXT.md's checkpoint rules).
 
 ```
 Implement email ingestion:
-1. Set up Gmail API auth (OAuth, token storage/refresh) — read-only scope for now.
-2. Fetch the N most recent emails (configurable): sender, subject, body (plain text,
+1. Set up Gmail API auth (OAuth, token storage/refresh) — request both read-only
+   (gmail.readonly) and send (gmail.send) scopes now, so the user isn't asked to
+   re-consent when send support lands in a later phase. The send scope is not used
+   yet — no code path in this phase actually sends anything, and nothing later sends
+   without an explicit user action in the review interface (human-in-the-loop, no
+   auto-send — see CONTEXT.md's design rationale).
+2. Fetch the N most recent emails (configurable, default N=50 via CLI flag/env var):
+   sender, subject, body (plain text,
    strip HTML safely), received_at, read/unread status, thread_id, raw headers
    (List-Unsubscribe, Precedence, Auto-Submitted — needed for no-reply detection downstream).
 3. Store each raw email in a raw_email table.
@@ -108,7 +114,11 @@ Do not touch any folder outside /ingestion/.
 ```
 Implement Calendar integration:
 1. Set up Google Calendar API auth (can share the OAuth flow with Gmail if scopes allow,
-   otherwise a second consent step) — read-only scope for now (freebusy + events.list).
+   otherwise a second consent step) — request both read (freebusy + events.list) and
+   write (events create/update) scopes now, for the same re-consent reason as Gmail's
+   send scope in Phase 1. Event creation is not implemented in this phase — this module
+   only reads free/busy and existing events; a later phase adds create/update, still
+   gated behind explicit user confirmation, never automatic.
 2. Write a function get_calendar_context(around_date_range) that returns free/busy blocks
    and any relevant existing events for a given window (e.g. next 7-14 days, configurable).
 3. Write a function suggest_available_slots(duration, date_range, working_hours) that

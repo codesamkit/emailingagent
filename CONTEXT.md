@@ -49,14 +49,18 @@ Work is split across 3 people to minimize merge conflicts. Everyone shares one f
 5. Run CI/tests after every merge to `main`, not just before.
 6. Rule of thumb: if a PR would touch a file outside your own folder, stop and coordinate — that's a sign the ownership split needs discussion, not a merge.
 
-## `ProcessedEmail` schema (proposed in Phase 0)
+## `ProcessedEmail` schema (frozen in Phase 0 — see `models/schema.py`)
 - `email_id`, `thread_id`, `sender`, `subject`, `received_at`, `read_status` (read/unread)
-- `is_no_reply` (bool) + `reason`
-- `importance_score` (numeric or low/medium/high/urgent) + short justification
-- `summary` (1–3 sentences)
-- `calendar_context` (nullable — populated only for scheduling-related emails; free/busy info or suggested slots)
+- `is_no_reply` (bool, nullable until classified) + `no_reply_reason`
+- `importance_score` (float, 0–100, nullable until scored), `importance_level` (low/medium/high/urgent, derived from score via thresholds), `importance_justification`
+- `summary` (1–3 sentences, nullable until summarized)
+- `is_scheduling_related` (bool, nullable until checked) — cheap keyword/intent gate, set before deciding whether to call the Calendar API at all
+- `calendar_context` (nullable — populated only when `is_scheduling_related == true`; free/busy info + suggested slots)
 - `reply_outline` (nullable list of bullets — only populated when `read_status == read` AND `is_no_reply == false`)
-- `reply_outline_status` (`none` / `suggested` / `edited` / `expanded_to_draft` / `sent`)
+- `reply_outline_status` (`none` / `not_applicable` / `suggested` / `edited` / `expanded_to_draft` / `sent`) — `not_applicable` added to match Phase 5's no-reply gating (was missing from the original draft, which only listed `none`)
+- `processed_at` (nullable — set by the pipeline each time this record is (re)processed; supports Phase 6's incremental re-run and Phase 8's debuggability)
+
+Both `importance_score` (numeric) and an `importance_level` category are kept — `scoring/filters.py`'s "top N" needs the numeric score, but "all urgent + unread" (Phase 3) needs a category, so scoring produces both instead of picking one.
 
 ## Phase-by-phase plan
 
@@ -82,11 +86,11 @@ Work is split across 3 people to minimize merge conflicts. Everyone shares one f
 - **Cheap scheduling-detection gate before the Calendar API call**: most emails aren't scheduling-related, so a fast keyword/intent check avoids paying API/latency cost on every email.
 - **Code-level (not just prompt-level) gating for outlines**: deterministic checks don't drift the way prompt instructions can — important for a hard rule like "never draft for unread/no-reply emails."
 
-## Open items to fill in before Phase 0 starts
-- Concrete tech stack (backend framework, DB choice, hosting).
-- Gmail/Calendar OAuth scopes and which account(s).
-- Rate limits and emails-per-run configuration.
-- Read-only vs. eventually sending/creating events.
+## Decisions locked in during Phase 0
+- **Tech stack:** Python + FastAPI + SQLite for local dev, Claude API for classification/summarization/drafting, React frontend later.
+- **Account:** iamsamkitshah@gmail.com.
+- **Emails-per-run default:** 50, configurable via CLI flag/env var.
+- **OAuth scope:** write scope requested from Phase 1 onward — `gmail.send` and Calendar `events` (create/update), not just read-only — so the user isn't asked to re-consent later when send/create-event features land. This does **not** change the human-in-the-loop design: Phase 5/7 still never call send/create-event automatically — an explicit user action in the review interface is required every time. The scopes are requested early; the write *code paths* (actually sending, actually creating events) are still future phases, stubbed until then. See PHASES.md Phase 1/1B for the updated scope list.
 
 ## File tree
 
