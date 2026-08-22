@@ -3,41 +3,27 @@
 Ingestion is expected to be re-run often (read statuses change, new mail
 arrives), so every write is an idempotent upsert keyed on the Gmail message id
 rather than a blind insert.
+
+Connection handling, the table DDL, and column migrations live in
+`models/db.py` — the shared layer Track A and Track C both build on, so the
+pipeline's `processed_email` writes and these `raw_email` writes cannot drift
+apart on schema or path resolution. This module owns only the row<->RawEmail
+mapping.
 """
 
 from __future__ import annotations
 
 import json
 import sqlite3
-from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable, Iterator, List, Optional
+from typing import Iterable, List, Optional
 
+from models import db
 from models.schema import ReadStatus
 
 from . import config
 from .models import RawEmail
-
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS raw_email (
-    email_id        TEXT PRIMARY KEY,
-    thread_id       TEXT NOT NULL,
-    sender          TEXT NOT NULL,
-    recipients      TEXT NOT NULL DEFAULT '[]',
-    subject         TEXT,
-    body_text       TEXT,
-    snippet         TEXT,
-    received_at     TEXT NOT NULL,
-    read_status     TEXT NOT NULL CHECK (read_status IN ('read', 'unread')),
-    label_ids       TEXT NOT NULL,
-    headers         TEXT NOT NULL,
-    has_attachments INTEGER NOT NULL DEFAULT 0,
-    fetched_at      TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS ix_raw_email_received_at ON raw_email (received_at DESC);
-CREATE INDEX IF NOT EXISTS ix_raw_email_thread ON raw_email (thread_id);
-"""
 
 # Mutable fields are refreshed on re-ingest; email_id and fetched_at are not.
 # read_status especially: an email read in Gmail since the last run must flip,
@@ -63,46 +49,13 @@ ON CONFLICT(email_id) DO UPDATE SET
 """
 
 
-def _resolve(db_path: Optional[Path]) -> Path:
-    return Path(db_path) if db_path is not None else config.DB_PATH
-
-
-@contextmanager
-def connect(db_path: Optional[Path] = None) -> Iterator[sqlite3.Connection]:
-    """Open the ingestion database, creating its parent directory if needed."""
-    path = _resolve(db_path)
-    if path.parent and str(path) != ":memory:":
-        path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(path))
-    conn.row_factory = sqlite3.Row
-    try:
-        yield conn
-    finally:
-        conn.close()
-
-
-# Columns added after the table first shipped, with the DDL to add them.
-# Applied on every open so a database written by an earlier version keeps
-# working instead of failing on an unknown column — re-ingesting 100+ messages
-# just to gain a column is not a reasonable upgrade path.
-_MIGRATIONS = (
-    ("recipients", "ALTER TABLE raw_email ADD COLUMN recipients TEXT NOT NULL DEFAULT '[]'"),
-)
-
-
-def _migrate(conn: sqlite3.Connection) -> None:
-    existing = {row["name"] for row in conn.execute("PRAGMA table_info(raw_email)")}
-    if not existing:
-        return  # fresh database; SCHEMA already created every column
-    for column, ddl in _MIGRATIONS:
-        if column not in existing:
-            conn.execute(ddl)
+# Re-exported so existing callers keep working after the move to models/db.py.
+connect = db.connect
 
 
 def _prepare(conn: sqlite3.Connection) -> None:
-    """Ensure the table exists and is up to date. Cheap and idempotent."""
-    conn.executescript(SCHEMA)
-    _migrate(conn)
+    """Ensure `raw_email` exists and is up to date. Cheap and idempotent."""
+    db.prepare(conn, db.RAW_EMAIL_SCHEMA)
 
 
 def init_db(db_path: Optional[Path] = None) -> None:
