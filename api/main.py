@@ -120,11 +120,19 @@ def list_emails(
 
 @app.get("/api/emails/{email_id}")
 def get_email(email_id: str) -> Dict[str, Any]:
-    """One email in full, including its calendar context."""
+    """One email in full: processed fields, calendar context, and the
+    original message text from `raw_email` (null if that row is gone,
+    e.g. a database written before ingestion ran)."""
     email = persist.get(email_id, DB_PATH)
     if email is None:
         raise HTTPException(status_code=404, detail="No processed email {0!r}".format(email_id))
-    return email_to_json(email, include_calendar=True)
+    payload = email_to_json(email, include_calendar=True)
+
+    from ingestion import store as raw_store
+
+    raw = raw_store.get(email_id, DB_PATH)
+    payload["body"] = raw.body if raw else None
+    return payload
 
 
 @app.patch("/api/emails/{email_id}/outline")
