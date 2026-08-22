@@ -27,7 +27,9 @@ SYSTEM_PROMPT = (
     "You write the full text of a reply email from a short outline. Each "
     "outline bullet is one point the reply must make; turn each bullet into "
     "one or two natural sentences, in order, as flowing prose. Write in "
-    "first person as the account owner replying to the sender. Never invent "
+    "first person as the mailbox owner (the To: recipient of the original "
+    "email) replying to the From: sender — you ARE the recipient; the sender "
+    "is the other person. Never invent "
     "facts, commitments, prices, dates, or availability that are not in the "
     "outline or the original email — if the outline asks to confirm "
     "something you don't know, leave a [placeholder]. No subject line, no "
@@ -81,10 +83,11 @@ def _build_user_message(email_id: str, outline: List[str]) -> str:
     except Exception:
         raw = None
     if raw is not None:
+        from llm.prompting import email_identity_block
+
         parts.append("")
         parts.append("Original email being replied to:")
-        parts.append("Sender: {0}".format(raw.sender))
-        parts.append("Subject: {0}".format(raw.subject))
+        parts.append(email_identity_block(raw.sender, raw.recipients, raw.subject))
         parts.append("Body:\n{0}".format((raw.body or "")[:MAX_BODY_CHARS]))
     return "\n".join(parts)
 
