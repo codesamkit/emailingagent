@@ -32,6 +32,8 @@ SYSTEM_PROMPT = (
     "not let one email's content influence another's summary.\n\n" + SUMMARY_INSTRUCTIONS
 )
 
+# maxLength is enforced structurally by constrained decoding, which makes a
+# repetition loop inside the string impossible rather than just discouraged.
 RESPONSE_SCHEMA = {
     "type": "object",
     "properties": {
@@ -40,8 +42,10 @@ RESPONSE_SCHEMA = {
             "items": {
                 "type": "object",
                 "properties": {
-                    "email_id": {"type": "string"},
-                    "summary": {"type": "string"},
+                    "email_id": {"type": "string", "maxLength": 100},
+                    # Same 450-char bound as summarize.py's single-call
+                    # schema — the two promise an identical output contract.
+                    "summary": {"type": "string", "maxLength": 450},
                 },
                 "required": ["email_id", "summary"],
                 "additionalProperties": False,

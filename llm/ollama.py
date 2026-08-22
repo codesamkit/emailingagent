@@ -95,7 +95,10 @@ class _Messages:
             "model": model or self._client.model,
             "messages": self._client._to_messages(system, messages or []),
             "stream": False,
-            "options": {"temperature": temperature},
+            "options": {
+                "temperature": temperature,
+                "repeat_penalty": config.OLLAMA_REPEAT_PENALTY,
+            },
         }
         if max_tokens:
             payload["options"]["num_predict"] = max_tokens

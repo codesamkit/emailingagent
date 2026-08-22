@@ -51,7 +51,10 @@ RESPONSE_SCHEMA = {
     "properties": {
         "bullets": {
             "type": "array",
-            "items": {"type": "string"},
+            # maxLength bounds each bullet structurally under constrained
+            # decoding — a repetition loop inside a bullet is impossible,
+            # and outline bullets are meant to be terse anyway.
+            "items": {"type": "string", "maxLength": 150},
             "minItems": MIN_BULLETS,
             "maxItems": MAX_BULLETS,
         }

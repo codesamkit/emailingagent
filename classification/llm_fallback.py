@@ -23,21 +23,53 @@ MAX_BODY_LINES = 5
 MAX_BODY_CHARS = 500
 
 SYSTEM_PROMPT = (
-    "You classify inbox emails as either transactional/automated \"no-reply\" "
-    "mail (which the recipient cannot meaningfully reply to and should never "
-    "receive a drafted reply for) or genuine personal/business correspondence "
-    "that deserves a reply. You will see only the sender, subject, and the "
-    "first few lines of the body. Judge based on tone, content, and whether "
-    "a human reply would make sense — not just surface patterns."
+    "You decide whether an inbox email deserves a human reply. Genuine "
+    "personal or business correspondence deserves one; transactional/"
+    "automated \"no-reply\" mail (receipts, notifications, newsletters, "
+    "marketing) does not — the recipient cannot meaningfully answer it. "
+    "You will see only the sender, subject, and the first few lines of the "
+    "body. Judge based on tone, content, and whether a human reply would "
+    "make sense — not just surface patterns. Anything written by a person "
+    "to this recipient — especially a \"Re:\" continuing a real thread — "
+    "deserves a reply. Give your reason first, then the answer.\n"
+    "\n"
+    "Examples:\n"
+    '- Sender: no-reply@github.com, Subject: "[repo] Build #412 failed" -> '
+    'reason: "automated CI notification; no human reads replies", '
+    "deserves_reply: false\n"
+    '- Sender: newsletter@theweekly.com, Subject: "This week in AI" -> '
+    'reason: "bulk newsletter content", deserves_reply: false\n'
+    '- Sender: events@meetup.com, Subject: "Your RSVP is confirmed" -> '
+    'reason: "transactional confirmation of an action already taken", '
+    "deserves_reply: false\n"
+    '- Sender: priya@company.com, Subject: "Re: Q3 planning doc" -> '
+    'reason: "a colleague continuing a real thread and asking questions", '
+    "deserves_reply: true\n"
+    '- Sender: student@university.edu, Subject: "Re: Completed video '
+    'homework (late)" -> reason: "a person replying about their own work '
+    'and expecting acknowledgement", deserves_reply: true\n'
+    '- Sender: alex.chen@gmail.com, Subject: "Quick question about your '
+    'talk" -> reason: "an individual asking the recipient something '
+    'directly", deserves_reply: true'
 )
 
+# Field order is load-bearing: under constrained JSON decoding the model
+# emits fields in declaration order, so `reason` MUST be declared before the
+# answer — otherwise the answer is committed first and the reasoning merely
+# rationalizes it instead of informing it. Do not "tidy" this order.
+# maxLength is enforced structurally by constrained decoding, which makes a
+# repetition loop inside the string impossible rather than just discouraged.
+# Polarity (`deserves_reply`, not `is_no_reply`) is deliberate too: small
+# models bias toward answering true, and a false "deserves reply" wastes one
+# outline call, while a false "is no-reply" permanently suppresses real
+# correspondence.
 RESPONSE_SCHEMA = {
     "type": "object",
     "properties": {
-        "is_no_reply": {"type": "boolean"},
-        "reason": {"type": "string"},
+        "reason": {"type": "string", "maxLength": 200},
+        "deserves_reply": {"type": "boolean"},
     },
-    "required": ["is_no_reply", "reason"],
+    "required": ["reason", "deserves_reply"],
     "additionalProperties": False,
 }
 
@@ -83,4 +115,6 @@ def classify_ambiguous(email: RawEmail, client: Optional[Any] = None) -> tuple[b
 
     text = next(block.text for block in response.content if block.type == "text")
     data = json.loads(text)
-    return bool(data["is_no_reply"]), str(data["reason"])
+    # The wire schema asks "deserves a reply?" (see RESPONSE_SCHEMA note);
+    # the frozen interface returns is_no_reply, so invert here.
+    return not bool(data["deserves_reply"]), str(data["reason"])

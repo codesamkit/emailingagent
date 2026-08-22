@@ -137,35 +137,72 @@ class _FakeClient:
         self.messages = _FakeMessages(payload)
 
 
+def fake_level_client(level: ImportanceLevel, justification: str = "because") -> "_FakeClient":
+    """The LLM now returns only a category + justification (see score.py);
+    the numeric score is computed deterministically from the signals."""
+    return _FakeClient({"justification": justification, "importance_level": level.value})
+
+
 class TestScoreImportance(unittest.TestCase):
     def test_parses_structured_response(self):
-        fake_client = _FakeClient({"importance_score": 62, "justification": "direct ask, moderate urgency"})
+        fake_client = fake_level_client(ImportanceLevel.HIGH, "direct ask, moderate urgency")
         email = make_email(subject="Can you review this by Friday?")
 
-        result = score.score_importance(email, is_no_reply=False, client=fake_client)
+        value, level, justification = score.score_importance(
+            email, is_no_reply=False, client=fake_client
+        )
 
-        self.assertEqual(result, (62.0, ImportanceLevel.HIGH, "direct ask, moderate urgency"))
+        self.assertEqual(level, ImportanceLevel.HIGH)
+        self.assertEqual(justification, "direct ask, moderate urgency")
+        floor, ceiling = score.LEVEL_BANDS[ImportanceLevel.HIGH]
+        self.assertGreaterEqual(value, floor)
+        self.assertLess(value, ceiling)
 
-    def test_score_clamped_above_range(self):
-        fake_client = _FakeClient({"importance_score": 150, "justification": "whatever"})
-        email = make_email()
+    def test_score_never_contradicts_level(self):
+        """The score must land inside the LLM-chosen level's band even with
+        every signal maxed out — a maxed HIGH email must not become URGENT."""
+        now = datetime(2026, 8, 22, 9, 0, 0)
+        email = make_email(
+            subject="URGENT deadline ASAP",
+            body="action required immediately",
+            received_at=now,  # maximally recent
+            read_status=ReadStatus.UNREAD,
+            headers={"To": "iamsamkitshah@gmail.com"},
+        )
+        for level in ImportanceLevel:
+            with self.subTest(level=level.value):
+                value, got_level, _ = score.score_importance(
+                    email, is_no_reply=False, client=fake_level_client(level)
+                )
+                self.assertEqual(got_level, level)
+                self.assertEqual(score._level_from_score(value), level)
 
-        value, level, _ = score.score_importance(email, is_no_reply=False, client=fake_client)
+    def test_signals_rank_within_a_band(self):
+        """Same level, stronger signals -> higher score (stable intra-level
+        ranking is the point of computing the number from rules)."""
+        client = fake_level_client(ImportanceLevel.MEDIUM)
+        plain = make_email(headers={"To": "someone.else@x.com", "Cc": "iamsamkitshah@gmail.com"})
+        strong = make_email(
+            subject="urgent: deadline today",
+            headers={"To": "iamsamkitshah@gmail.com"},
+        )
 
-        self.assertEqual(value, 100.0)
-        self.assertEqual(level, ImportanceLevel.URGENT)
+        plain_value, _, _ = score.score_importance(plain, is_no_reply=False, client=client)
+        strong_value, _, _ = score.score_importance(strong, is_no_reply=False, client=client)
 
-    def test_score_clamped_below_range(self):
-        fake_client = _FakeClient({"importance_score": -20, "justification": "whatever"})
-        email = make_email()
+        self.assertGreater(strong_value, plain_value)
 
-        value, level, _ = score.score_importance(email, is_no_reply=False, client=fake_client)
+    def test_no_reply_pins_to_band_floor(self):
+        fake_client = fake_level_client(ImportanceLevel.LOW)
+        email = make_email(sender="no-reply@service.com", subject="URGENT: your receipt")
 
-        self.assertEqual(value, 0.0)
+        value, level, _ = score.score_importance(email, is_no_reply=True, client=fake_client)
+
+        self.assertEqual(value, score.LEVEL_BANDS[ImportanceLevel.LOW][0])
         self.assertEqual(level, ImportanceLevel.LOW)
 
     def test_signals_included_in_prompt(self):
-        fake_client = _FakeClient({"importance_score": 10, "justification": "no-reply"})
+        fake_client = fake_level_client(ImportanceLevel.LOW, "no-reply")
         email = make_email(sender="no-reply@service.com", subject="Your receipt")
 
         score.score_importance(email, is_no_reply=True, client=fake_client)

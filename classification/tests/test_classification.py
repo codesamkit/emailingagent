@@ -177,15 +177,25 @@ class TestClassifyAmbiguous(unittest.TestCase):
     (no real network/API key involved)."""
 
     def test_parses_structured_response(self):
-        fake_client = _FakeClient({"is_no_reply": True, "reason": "bulk marketing content"})
+        # The wire schema answers "deserves_reply"; classify_ambiguous
+        # inverts it into the frozen (is_no_reply, reason) return shape.
+        fake_client = _FakeClient({"reason": "bulk marketing content", "deserves_reply": False})
         email = make_email(sender="promo@shop.com", subject="50% off everything")
 
         result = llm_fallback.classify_ambiguous(email, client=fake_client)
 
         self.assertEqual(result, (True, "bulk marketing content"))
 
+    def test_deserves_reply_maps_to_not_no_reply(self):
+        fake_client = _FakeClient({"reason": "personal note", "deserves_reply": True})
+        email = make_email(sender="friend@gmail.com", subject="Lunch?")
+
+        result = llm_fallback.classify_ambiguous(email, client=fake_client)
+
+        self.assertEqual(result, (False, "personal note"))
+
     def test_prompt_uses_only_sender_subject_and_body_snippet(self):
-        fake_client = _FakeClient({"is_no_reply": False, "reason": "personal note"})
+        fake_client = _FakeClient({"reason": "personal note", "deserves_reply": True})
         long_body = "\n".join(f"line {i}" for i in range(20))
         email = make_email(sender="a@b.com", subject="Subj", body=long_body)
 

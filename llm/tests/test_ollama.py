@@ -112,6 +112,17 @@ class TestRequestTranslation:
         )
         assert session.posts[0]["json"]["options"]["num_predict"] == 512
 
+    def test_repeat_penalty_is_always_sent(self):
+        """Guards against repetition loops inside JSON string fields."""
+        from llm import config as llm_config
+
+        session = FakeSession()
+        client(session).messages.create(messages=[{"role": "user", "content": "hi"}])
+        assert (
+            session.posts[0]["json"]["options"]["repeat_penalty"]
+            == llm_config.OLLAMA_REPEAT_PENALTY
+        )
+
     def test_streaming_is_off(self):
         session = FakeSession()
         client(session).messages.create(messages=[{"role": "user", "content": "hi"}])

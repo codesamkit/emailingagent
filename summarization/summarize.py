@@ -32,10 +32,13 @@ SYSTEM_PROMPT = (
     "triaging their inbox.\n\n" + SUMMARY_INSTRUCTIONS
 )
 
+# maxLength is enforced structurally by constrained decoding, which makes a
+# repetition loop inside the string impossible rather than just discouraged.
 RESPONSE_SCHEMA = {
     "type": "object",
     "properties": {
-        "summary": {"type": "string"},
+        # ~3 sentences; also structurally holds the 1-3 sentence spec.
+        "summary": {"type": "string", "maxLength": 450},
     },
     "required": ["summary"],
     "additionalProperties": False,

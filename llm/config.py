@@ -36,6 +36,11 @@ OLLAMA_MODEL = _clean(os.environ.get("OLLAMA_MODEL")) or "llama3.1:8b"
 # default here is generous on purpose so a cold model load isn't read as a
 # failure.
 OLLAMA_TIMEOUT = float(os.environ.get("OLLAMA_TIMEOUT") or 300)
+# Penalize token repetition (an Ollama sampling option; the Anthropic path
+# never sees it). Without it a small model can loop inside a JSON string
+# field under constrained decoding and burn the whole token budget without
+# ever closing the quote.
+OLLAMA_REPEAT_PENALTY = float(os.environ.get("OLLAMA_REPEAT_PENALTY") or 1.3)
 
 # --- Anthropic -------------------------------------------------------------
 ANTHROPIC_MODEL = _clean(os.environ.get("ANTHROPIC_MODEL")) or "claude-opus-5"
