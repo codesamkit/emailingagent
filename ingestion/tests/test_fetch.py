@@ -167,5 +167,5 @@ class TestEndToEnd:
 
         stored = store.get("b", db)
         assert stored.has_attachments is True
-        assert stored.body_text == "See attached."
+        assert stored.body == "See attached."
         assert stored.sender == "Ops <ops@example.com>"

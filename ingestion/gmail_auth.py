@@ -44,6 +44,18 @@ def _save_token(creds: Credentials, token_file: Path) -> None:
     os.chmod(token_file, 0o600)
 
 
+def _has_required_scopes(creds: Credentials, scopes) -> bool:
+    """Whether a stored token already covers everything we need.
+
+    A token minted before the send scope was added is still *valid*; it just
+    cannot do everything. Without this check google-auth would happily keep
+    using the narrower token and the missing scope would only surface much
+    later as a confusing 403 at call time.
+    """
+    granted = set(getattr(creds, "scopes", None) or [])
+    return set(scopes).issubset(granted) if granted else False
+
+
 def get_credentials(
     credentials_file: Optional[Path] = None,
     token_file: Optional[Path] = None,
@@ -59,8 +71,14 @@ def get_credentials(
     token_file = token_file or config.TOKEN_FILE
 
     creds = _load_token(token_file)
-    if creds and creds.valid:
+    if creds and creds.valid and _has_required_scopes(creds, config.SCOPES):
         return creds
+
+    if creds and not _has_required_scopes(creds, config.SCOPES):
+        log.warning(
+            "Stored token at %s lacks a required scope; re-running consent", token_file
+        )
+        creds = None
 
     if creds and creds.expired and creds.refresh_token:
         try:

@@ -7,6 +7,10 @@ import sqlite3
 
 import pytest
 
+from datetime import datetime
+
+from models.schema import ReadStatus
+
 from ingestion import store
 from ingestion.models import RawEmail
 
@@ -18,16 +22,21 @@ def db(tmp_path):
     return path
 
 
+def at(iso: str) -> datetime:
+    return datetime.fromisoformat(iso)
+
+
 def make_email(email_id="m1", read_status="unread", subject="Hello", **overrides):
     defaults = dict(
         email_id=email_id,
         thread_id="t1",
         sender="Dana Reed <dana@example.com>",
+        recipients=["me@example.com"],
         subject=subject,
-        body_text="Body text.",
+        body="Body text.",
         snippet="Body",
-        received_at="2025-08-22T12:00:00+00:00",
-        read_status=read_status,
+        received_at=at("2025-08-22T12:00:00+00:00"),
+        read_status=ReadStatus(read_status),
         label_ids=["INBOX", "UNREAD"] if read_status == "unread" else ["INBOX"],
         headers={"From": "Dana Reed <dana@example.com>", "Precedence": "bulk"},
         has_attachments=False,
@@ -95,9 +104,9 @@ class TestQueries:
     def test_recent_sorts_newest_first_and_limits(self, db):
         store.upsert_emails(
             [
-                make_email("a", received_at="2025-08-01T00:00:00+00:00"),
-                make_email("b", received_at="2025-08-03T00:00:00+00:00"),
-                make_email("c", received_at="2025-08-02T00:00:00+00:00"),
+                make_email("a", received_at=at("2025-08-01T00:00:00+00:00")),
+                make_email("b", received_at=at("2025-08-03T00:00:00+00:00")),
+                make_email("c", received_at=at("2025-08-02T00:00:00+00:00")),
             ],
             db,
         )

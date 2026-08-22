@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
+from models.schema import RawEmail as SchemaRawEmail
+from models.schema import ReadStatus
+
 from ingestion import parse
 from ingestion.tests import fixtures as fx
 
@@ -108,11 +113,17 @@ class TestExtractHeaders:
 
 
 class TestInternalDate:
-    def test_converts_epoch_millis_to_iso_utc(self):
-        assert parse.internal_date_to_iso("1755864000000") == "2025-08-22T12:00:00+00:00"
+    def test_converts_epoch_millis_to_aware_utc_datetime(self):
+        result = parse.internal_date_to_datetime("1755864000000")
+        assert result == datetime(2025, 8, 22, 12, 0, tzinfo=timezone.utc)
+        assert result.tzinfo is not None
 
     def test_falls_back_to_now_when_missing(self):
-        assert parse.internal_date_to_iso(None).endswith("+00:00")
+        """The contract requires a datetime; a missing internalDate must not
+        produce a None the rest of the pipeline has to defend against."""
+        result = parse.internal_date_to_datetime(None)
+        assert isinstance(result, datetime)
+        assert result.utcoffset() == timedelta(0)
 
 
 class TestToRawEmail:
@@ -126,13 +137,36 @@ class TestToRawEmail:
         assert email.thread_id == "thr"
         assert email.sender == "Dana Reed <dana@example.com>"
         assert email.subject == "Lunch Thursday?"
-        assert email.read_status == "unread"
-        assert email.received_at == "2025-08-22T12:00:00+00:00"
+        assert email.read_status == ReadStatus.UNREAD
+        assert email.received_at == datetime(2025, 8, 22, 12, 0, tzinfo=timezone.utc)
         assert email.has_attachments is False
+        # Populated from To:/Cc: — required by the frozen contract and by
+        # Track B's direct-vs-CC importance signal.
+        assert email.recipients == ["me@example.com"]
+
+    def test_is_the_frozen_contract_type(self):
+        """Track B types against models.schema.RawEmail; ingestion output must
+        satisfy isinstance, not merely resemble it. This is the Checkpoint 1
+        integration bug that used to live here."""
+        email = parse.to_raw_email(fx.message(payload=fx.PLAIN_ONLY))
+        assert isinstance(email, SchemaRawEmail)
+
+    def test_recipients_include_cc(self):
+        payload = dict(fx.PLAIN_ONLY)
+        payload["headers"] = fx.headers(
+            From="Dana Reed <dana@example.com>",
+            To="me@example.com",
+            Cc="team@example.com, lead@example.com",
+            Subject="Lunch Thursday?",
+        )
+        email = parse.to_raw_email(fx.message(payload=payload))
+        assert email.recipients == [
+            "me@example.com", "team@example.com", "lead@example.com"
+        ]
 
     def test_read_status_is_read_without_the_unread_label(self):
         msg = fx.message(label_ids=["INBOX"], payload=fx.PLAIN_ONLY)
-        assert parse.to_raw_email(msg).read_status == "read"
+        assert parse.to_raw_email(msg).read_status == ReadStatus.READ
 
     def test_hint_headers_surface_automation_signals(self):
         msg = fx.message(payload=fx.HTML_ONLY)

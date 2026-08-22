@@ -31,8 +31,17 @@ def _int(env_var: str, default: int) -> int:
 
 
 # --- OAuth -----------------------------------------------------------------
-# Read-only. Phase 1 never sends, modifies, or deletes anything.
-SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
+# Both scopes are requested at first consent, per the Phase 0 decision in
+# CONTEXT.md: asking for the send scope now means the user is not prompted to
+# re-consent when the send feature lands in a later phase.
+#
+# This does NOT make ingestion able to send. Nothing in this package calls
+# users.messages.send; the write *code path* stays a future phase, gated
+# behind an explicit user action in the review interface. Same pattern as
+# calendaring/config.py's calendar.events scope.
+READ_SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
+SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send"
+SCOPES = [READ_SCOPE, SEND_SCOPE]
 
 def _discover_credentials() -> Path:
     """Locate the OAuth client secrets file at the repo root.

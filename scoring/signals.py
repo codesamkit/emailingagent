@@ -8,7 +8,7 @@ score, they just describe the email so the LLM can weigh them.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from models.schema import ReadStatus, RawEmail
@@ -69,6 +69,17 @@ def _urgency_hits(subject: str, body: str) -> list[str]:
     return [kw for kw in URGENCY_KEYWORDS if kw in text]
 
 
+def _as_utc(value: datetime) -> datetime:
+    """Treat a naive datetime as UTC rather than refusing to compare it.
+
+    `models/schema.py` does not state whether its datetimes are tz-aware, so
+    both shapes can reach this function depending on the producer. Assuming
+    UTC for naive input matches every producer in the repo and keeps scoring
+    from crashing on a fixture built by hand.
+    """
+    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
+
+
 def compute_signals(
     email: RawEmail,
     is_no_reply: bool,
@@ -78,11 +89,15 @@ def compute_signals(
     """Returns a plain dict of rule-based signals for score.py to pass to
     the LLM as context."""
 
-    now = now or datetime.utcnow()
+    # Timezone-aware throughout. Ingestion derives received_at from Gmail's
+    # internalDate, which is an absolute UTC instant, so an aware value is what
+    # actually arrives here; a naive utcnow() made this subtraction raise
+    # TypeError the first time real ingested mail was scored.
+    now = _as_utc(now) if now is not None else datetime.now(timezone.utc)
     headers = email.headers or {}
     sender_addr = _addr_only(email.sender)
 
-    hours_since_received = (now - email.received_at).total_seconds() / 3600.0
+    hours_since_received = (now - _as_utc(email.received_at)).total_seconds() / 3600.0
     is_unread = email.read_status == ReadStatus.UNREAD
 
     return {

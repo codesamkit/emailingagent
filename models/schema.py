@@ -9,6 +9,11 @@ Owned by nobody; changes require flagging Track A, B, and C first
 - Track C (drafting/pipeline) fills in reply_outline and orchestrates
   persistence via models/db.py.
 
+All `datetime` fields in this contract are timezone-aware UTC. Ingestion
+derives `received_at` from Gmail's `internalDate` (an absolute UTC instant),
+and mixing naive and aware datetimes raises `TypeError` on comparison — so
+producers must attach a timezone and consumers may rely on one being there.
+
 Plain dataclasses (stdlib only) are used deliberately: the tech stack
 (FastAPI vs. something else) isn't finalized yet, so this contract doesn't
 assume a web framework. If FastAPI is confirmed later, these can be wrapped
@@ -18,7 +23,7 @@ in or ported to Pydantic models without changing field names/shapes.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional
 
@@ -79,7 +84,13 @@ class CalendarContext:
     busy_blocks: list[CalendarSlot] = field(default_factory=list)
     existing_events: list[dict] = field(default_factory=list)
     suggested_slots: list[CalendarSlot] = field(default_factory=list)
-    generated_at: datetime = field(default_factory=datetime.utcnow)
+    # Timezone-aware UTC, matching every other datetime in this contract.
+    # datetime.utcnow() returns a *naive* value, which cannot be compared or
+    # subtracted against the aware datetimes ingestion produces — the same
+    # defect that made scoring/signals.py raise TypeError on real mail.
+    generated_at: datetime = field(
+        default_factory=lambda: datetime.now(timezone.utc)
+    )
 
 
 @dataclass

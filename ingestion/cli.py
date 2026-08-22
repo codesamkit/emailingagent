@@ -27,14 +27,14 @@ from typing import List, Optional, Sequence
 from . import config, store
 from .fetch import fetch_recent_emails
 from .gmail_auth import MissingCredentialsError, get_gmail_service, get_profile
-from .models import RawEmail
+from .models import READ, RawEmail
 
 # Sample-table layout: (heading, width, value function).
 _COLUMNS = (
     ("SENDER", 30, lambda e: e.sender),
     ("SUBJECT", 42, lambda e: e.subject or "(no subject)"),
-    ("RECEIVED (UTC)", 16, lambda e: e.received_at[:16].replace("T", " ")),
-    ("READ?", 6, lambda e: "read" if e.read_status == "read" else "UNREAD"),
+    ("RECEIVED (UTC)", 16, lambda e: e.received_at.strftime("%Y-%m-%d %H:%M")),
+    ("READ?", 6, lambda e: "read" if e.read_status == READ else "UNREAD"),
     ("ATT?", 4, lambda e: "yes" if e.has_attachments else "-"),
     ("AUTOMATION HEADERS", 34, lambda e: ", ".join(e.hint_headers()) or "-"),
 )
@@ -63,15 +63,16 @@ def _print_full(email: RawEmail) -> None:
     print("thread_id      : {0}".format(email.thread_id))
     print("sender         : {0}".format(email.sender))
     print("subject        : {0}".format(email.subject))
-    print("received_at    : {0}".format(email.received_at))
-    print("read_status    : {0}".format(email.read_status))
+    print("received_at    : {0}".format(email.received_at.isoformat()))
+    print("read_status    : {0}".format(email.read_status.value))
+    print("recipients     : {0}".format(", ".join(email.recipients) or "-"))
     print("label_ids      : {0}".format(", ".join(email.label_ids) or "-"))
     print("has_attachments: {0}".format(email.has_attachments))
     print("\nheaders:")
     for name, value in email.headers.items():
         print("  {0}: {1}".format(name, _truncate(value, 200)))
-    print("\nbody_text ({0} chars):".format(len(email.body_text)))
-    body = email.body_text or "(empty — attachment-only or bodyless message)"
+    print("\nbody ({0} chars):".format(len(email.body)))
+    body = email.body or "(empty — attachment-only or bodyless message)"
     print(textwrap.indent(body[:2000], "  "))
     if len(body) > 2000:
         print("  ... [{0} more chars]".format(len(body) - 2000))

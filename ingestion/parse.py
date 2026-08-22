@@ -270,18 +270,35 @@ def has_attachments(payload: Dict[str, Any]) -> bool:
     return walk(payload or {})
 
 
-def internal_date_to_iso(internal_date: Any) -> str:
-    """Gmail `internalDate` (epoch milliseconds) -> ISO-8601 UTC.
+def internal_date_to_datetime(internal_date: Any) -> datetime:
+    """Gmail `internalDate` (epoch milliseconds) -> timezone-aware UTC datetime.
 
     `internalDate` is when Gmail received the message. It is preferred over the
     `Date:` header, which is set by the sending client and is frequently wrong
     or missing a usable timezone.
+
+    Returns a `datetime` rather than an ISO string because that is what the
+    frozen contract in `models/schema.py` specifies. Serialization back to
+    text is `store.py`'s concern, not the parser's.
     """
     try:
         millis = int(internal_date)
     except (TypeError, ValueError):
-        return datetime.now(timezone.utc).isoformat()
-    return datetime.fromtimestamp(millis / 1000, tz=timezone.utc).isoformat()
+        return datetime.now(timezone.utc)
+    return datetime.fromtimestamp(millis / 1000, tz=timezone.utc)
+
+
+def split_recipients(payload: Dict[str, Any]) -> List[str]:
+    """Every address this message was addressed to, To: and Cc: combined.
+
+    Required by the frozen contract and used by Track B's direct-vs-CC
+    importance signal. Addresses are kept as written (display name included)
+    to match `sender`; callers that need the bare address parse it themselves.
+    """
+    combined = ", ".join(
+        value for value in (get_header(payload, "To"), get_header(payload, "Cc")) if value
+    )
+    return [part.strip() for part in combined.split(",") if part.strip()]
 
 
 def to_raw_email(message: Dict[str, Any]) -> RawEmail:
@@ -293,9 +310,10 @@ def to_raw_email(message: Dict[str, Any]) -> RawEmail:
         thread_id=str(message.get("threadId", "")),
         sender=get_header(payload, "From"),
         subject=get_header(payload, "Subject"),
-        body_text=extract_body(payload),
+        recipients=split_recipients(payload),
+        body=extract_body(payload),
         snippet=normalize_whitespace(str(message.get("snippet", ""))),
-        received_at=internal_date_to_iso(message.get("internalDate")),
+        received_at=internal_date_to_datetime(message.get("internalDate")),
         read_status=UNREAD if "UNREAD" in label_ids else READ,
         label_ids=label_ids,
         headers=extract_headers(payload),
