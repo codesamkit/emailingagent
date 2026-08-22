@@ -223,6 +223,13 @@ def score_importance(
     # The LLM only picks the category (schema enum guarantees a valid one);
     # the numeric score is placed within that category's band by rules.
     level = ImportanceLevel(data["importance_level"])
+    if is_no_reply and level in (ImportanceLevel.URGENT, ImportanceLevel.HIGH):
+        # Code-level rule, same philosophy as drafting's outline gate (see
+        # CONTEXT.md): automated mail must never outrank human
+        # correspondence, however loud it is — prompt instructions alone
+        # drift on small models. Medium is the ceiling so a genuine
+        # security notice can still surface above the low-band noise.
+        level = ImportanceLevel.MEDIUM
     score = _score_within_band(level, signals)
     justification = str(data["justification"])
 

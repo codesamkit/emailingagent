@@ -192,6 +192,18 @@ class TestScoreImportance(unittest.TestCase):
 
         self.assertGreater(strong_value, plain_value)
 
+    def test_no_reply_is_capped_at_medium(self):
+        """A hard rule in code, not a prompt hint: automated mail must not
+        outrank human correspondence even when the model calls it urgent."""
+        email = make_email(sender="no-reply@service.com", subject="URGENT: sign-on alert")
+        for claimed in (ImportanceLevel.URGENT, ImportanceLevel.HIGH):
+            with self.subTest(claimed=claimed.value):
+                value, level, _ = score.score_importance(
+                    email, is_no_reply=True, client=fake_level_client(claimed)
+                )
+                self.assertEqual(level, ImportanceLevel.MEDIUM)
+                self.assertEqual(value, score.LEVEL_BANDS[ImportanceLevel.MEDIUM][0])
+
     def test_no_reply_pins_to_band_floor(self):
         fake_client = fake_level_client(ImportanceLevel.LOW)
         email = make_email(sender="no-reply@service.com", subject="URGENT: your receipt")

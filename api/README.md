@@ -19,17 +19,27 @@ means almost any host can run it later.
 ## Run it
 
 ```bash
+# 0. Pick an LLM backend (local, free — or set ANTHROPIC_API_KEY and skip this)
+export LLM_PROVIDER=ollama OLLAMA_MODEL=gemma2:2b   # needs `ollama serve`
+
 # 1. Ingest mail (once, or whenever you want fresh mail)
 python -m ingestion.cli ingest
 
-# 2. Process it (needs ANTHROPIC_API_KEY for the LLM stages)
+# 2. Process it
 python -m pipeline.cli process
 
-# 3. Serve
+# 3. Serve — the review UI *and* the API
 uvicorn api.main:app --reload --port 8000
 ```
 
-Then <http://localhost:8000/docs> for interactive docs.
+Then <http://localhost:8000/> for the review UI (`api/static/index.html`,
+a single self-contained page — no frontend build step), or
+<http://localhost:8000/docs> for interactive API docs.
+
+The server process needs the same `LLM_PROVIDER`/`OLLAMA_MODEL` (or
+`ANTHROPIC_API_KEY`) environment as the pipeline: "expand to full draft"
+makes one LLM call per click. Everything else is a pure read of rows the
+batch job wrote.
 
 Steps 1 and 2 are independent of step 3 — the API serves whatever has been
 processed so far, including nothing.
