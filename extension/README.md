@@ -1,6 +1,6 @@
-# Gmail Chrome extension
+# Valence — Gmail Chrome extension
 
-A Manifest V3 extension that surfaces the email agent's output inside Gmail:
+A Manifest V3 extension that surfaces Valence (the email agent) inside Gmail:
 
 - **Inbox list** — an importance badge (`urgent 92`, `high 74`, …) plus a
   topic chip and a 📅 marker for scheduling emails on every processed thread.

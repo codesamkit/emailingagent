@@ -55,7 +55,7 @@
     panel = el("div", "ea-panel");
 
     const header = el("div", "ea-panel-header");
-    header.appendChild(el("span", "ea-panel-title", "Email Agent"));
+    header.appendChild(el("span", "ea-panel-title", "Valence"));
 
     const tabs = el("div", "ea-tabs");
     for (const [key, label] of [["email", "Email"], ["inbox", "Inbox"]]) {
