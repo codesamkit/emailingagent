@@ -1,0 +1,9 @@
+# Calendar module (Track A) dependencies. Other tracks: append your own
+# deps below rather than replacing this file.
+google-api-python-client
+google-auth-httplib2
+google-auth-oauthlib
+
+# Drafting module (Track C) dependencies.
+anthropic
+pytest

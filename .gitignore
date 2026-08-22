@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+.venv/
+venv/
+
+# OAuth secrets/tokens - never commit
+credentials.json
+token_calendar.json
+token_gmail.json
+.env
