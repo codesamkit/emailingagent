@@ -1,107 +1,69 @@
-# AI Email Agent — Phased Build Prompt (for Claude Code)
+# AI Email Agent — Phased Build Playbook (for Claude Code)
 
 ## How to use this
-Feed each phase to Claude Code **one at a time**, in order, within each person's track (see "Parallelization Plan" below). Don't paste the whole document at once — let Claude Code finish and verify each phase before moving to the next.
+Feed each phase's prompt to Claude Code **one at a time, in order**, within the owner's track. Don't paste the whole document at once — let Claude Code finish and verify each phase before moving to the next.
 
-This version is designed for **3 people building in parallel** with minimal file/merge conflicts. Read the Parallelization Plan before anyone starts coding — it defines who owns which files and the shared contract everyone codes against.
+Before starting, read:
+- **`CONTEXT.md`** — project summary, the 3-track ownership map, the `ProcessedEmail` schema, integration checkpoints, and design rationale.
+- **`FILE-TREE.md`** — target directory layout.
+
+This doc only contains the **run order** (who runs which phase, when) and the **actual prompts** to paste into Claude Code for each phase. It assumes Claude Code has repo access and can read `CONTEXT.md`/`FILE-TREE.md` itself — prompts below reference those files instead of re-stating them.
+
+---
+
+## Run order — who runs each phase, and when
+
+| Phase | Runs as | Depends on / runs when |
+|---|---|---|
+| 0 | **All 3, together** (pair on this — don't parallelize) | First, before any other phase |
+| 1 | **Person A** (Track A) | After Phase 0 is frozen |
+| 1B | **Person A** (Track A) | After Phase 0; can run right after Phase 1 or in parallel |
+| 2 | **Person B** (Track B) | After Phase 0; parallel with Track A |
+| 3 | **Person B** (Track B) | After Phase 2 |
+| 4 | **Person B** (Track B) | After Phase 3 |
+| 5 | **Person C** (Track C) | After Phase 0; parallel with Tracks A/B, develops against fixtures |
+| 6 | **Person C** (Track C) | After **Checkpoint 1** (Track A's real data replaces Track B/C fixtures) |
+| 7 | **Person C** (Track C) | After Phase 6 |
+| 8 | **All 3**, each on their own track | After Phases 1–7 are merged |
+
+Full ownership map, per-track file lists, and the integration checkpoint rules are in `CONTEXT.md` — read that before Phase 0.
 
 ---
 
 ## Project Context (paste once, at the start of every session, for every person)
 
 ```
-I'm building an AI email agent with the following core behavior:
-
-1. It connects to a user's email inbox (Gmail API to start) AND their Google Calendar.
-2. It sorts/ranks emails by importance.
-3. It generates a short summary for every email.
-4. For emails the user has already READ, it generates a planned reply — as a short OUTLINE
-   (bullet points of what the reply should say / key points to hit), NOT a full written-out
-   email. The user will expand it into prose themselves or ask for a full draft on demand.
-5. For emails that are UNREAD, no reply outline is generated — only classification + summary.
-   Outlines get generated once the email is marked read (or on-demand).
-6. If an email is from a no-reply address (or is clearly transactional/automated with no
-   expectation of a reply), it must be flagged clearly as "No-Reply" and MUST NOT get a
-   reply outline at all, regardless of read status.
-7. Calendar integration: for emails that involve scheduling (meeting requests, "are you free
-   Tuesday", event invites), the agent should check the user's Google Calendar for conflicts/
-   availability and use that when generating the reply outline (e.g. "Suggest: propose Wed 2pm
-   or Thu 10am — both open on calendar" instead of guessing blind).
-8. Output should be inspectable — I want to see the importance score, summary, no-reply flag,
-   calendar context (if any), and reply outline (if any) for each email, as structured data
-   first, UI later.
+I'm building an AI email agent — see CONTEXT.md in this repo for the full behavior spec,
+schema, and ownership map before doing anything else.
 
 Tech stack: [FILL IN — e.g. Python + FastAPI backend, Gmail API, Google Calendar API,
 Claude API for classification/summarization/drafting, SQLite for local dev storage,
 React frontend later]
 
-We are working in phases, split across 3 people working in parallel (see the shared
-Parallelization Plan / file ownership map). Stay inside your owned files/folders only.
-Do not implement future phases early. At the end of each phase, run/test what you built
-and report back before moving to the next phase in your track.
+We are working in phases, split across 3 people working in parallel (see CONTEXT.md's
+ownership map). Stay inside your owned files/folders only. Do not implement future
+phases early. At the end of each phase, run/test what you built and report back before
+moving to the next phase in your track.
 ```
+
+**Fill in the tech stack line above before running Phase 0** — better structural choices come from locking that in early.
 
 ---
 
-## Parallelization Plan — read this before splitting up work
-
-**Principle:** the three people can't fully avoid dependencies (Person B and C both need the data model Person A defines), so we solve that by locking the **data model and interfaces in Phase 0** — as a single shared, small file that everyone treats as read-only after it's agreed. Every other file is owned by exactly one person. Nobody edits another person's owned files. Integration happens at defined checkpoints via PRs, not by editing each other's code directly.
-
-### Shared contract (owned by nobody — agreed once in Phase 0, then frozen)
-- `models/schema.py` (or `.ts`) — the `RawEmail`, `ProcessedEmail`, and `CalendarContext` data classes/types.
-- `interfaces/README.md` — one page documenting each person's module's expected function signatures (inputs/outputs), so others can write against a stub without waiting on the real implementation.
-
-If someone needs a schema field added after Phase 0 is frozen, they propose it in the interfaces doc and flag it to the other two — don't unilaterally edit the shared schema mid-sprint.
-
-### Track A — Person 1: Ingestion & Calendar
-**Owns:** `/ingestion/`, `/calendar/`, `models/schema.py` (initial draft in Phase 0, then frozen)
-**Builds:** Phase 0 (schema draft), Phase 1 (Gmail ingestion), Phase 1B (Calendar integration)
-**Produces for others:** rows in `raw_email` table + a `CalendarContext` object (free/busy blocks, upcoming events) that Track C consumes.
-
-### Track B — Person 2: Classification & Intelligence
-**Owns:** `/classification/` (no-reply detection), `/scoring/` (importance), `/summarization/`
-**Builds:** Phase 2 (no-reply detection), Phase 3 (importance ranking), Phase 4 (summarization)
-**Depends on:** the frozen schema only (works against mock `RawEmail` rows — doesn't need Track A's real ingestion running to develop and test).
-**Produces for others:** `is_no_reply`, `importance_score`, `summary` fields on `ProcessedEmail`.
-
-### Track C — Person 3: Draft Outlines & Orchestration/UI
-**Owns:** `/drafting/`, `/pipeline/`, `/interface/`
-**Builds:** Phase 5 (outline generation, gated + calendar-aware), Phase 6 (orchestration pipeline), Phase 7 (review UI)
-**Depends on:** the frozen schema + mocked outputs from Track A/B (works against fixture data — e.g. a `fixtures.json` of sample processed emails with is_no_reply/importance/summary already filled in — so Track C isn't blocked waiting on the others).
-
-### Merge/integration checkpoints (avoid push conflicts)
-1. **Checkpoint 0 (before anyone codes beyond schema):** all 3 agree on `models/schema.py` and `interfaces/README.md` in one sitting (pair on this part, don't parallelize it). Merge this first, tag it, everyone branches from it.
-2. Each person works on their own branch (`track-a-ingestion`, `track-b-classification`, `track-c-drafting`) and only touches files inside their owned folders. No one edits `models/schema.py` again without flagging the other two first.
-3. **Checkpoint 1:** Track A's real ingestion output gets swapped in for Track B and C's mocks. Do this as a small, separate integration PR — not by any one person editing another's folder.
-4. **Checkpoint 2:** Track C's pipeline (Phase 6) wires all three tracks together for the first time end-to-end. This PR touches `/pipeline/` only (Track C's own folder) and imports from the others — it doesn't modify Track A or B's internals.
-5. Run CI/tests after every merge to `main`, not just before — catches integration breaks fast since three people are shipping concurrently.
-
-**Rule of thumb to prevent push conflicts:** if a PR would touch a file outside your own folder (other than pulling in a new merged dependency), stop and coordinate first — that's a signal the ownership split needs a quick conversation, not a merge.
-
----
-
-## Phase 0 — Requirements & Architecture Lock-In (all 3, together)
-
-**Goal:** Get alignment before any code is written. Do this one together, not split up — it's the shared contract everything else depends on.
+## Phase 0 — Requirements & Architecture Lock-In
+**Runs as: all 3, together.** This is the shared contract everything else depends on — pair on it, don't split it up.
 
 ```
-Before writing code, do the following:
+Read CONTEXT.md (schema draft, ownership map) and FILE-TREE.md (proposed structure) —
+both already contain a draft. Your job this phase is to confirm or refine those drafts,
+not invent from scratch:
 
-1. Propose a project structure (folders/files) matching the ownership map above:
-   /ingestion/, /calendar/, /classification/, /scoring/, /summarization/, /drafting/,
-   /pipeline/, /interface/, /models/, /interfaces/.
-2. Propose models/schema.py with the data model for a "processed email" record, including:
-   - email_id, thread_id, sender, subject, received_at, read_status (read/unread)
-   - is_no_reply (boolean) + reason
-   - importance_score (numeric or enum: low/medium/high/urgent) + short justification
-   - summary (1-3 sentences)
-   - calendar_context (nullable — populated only when the email is scheduling-related;
-     includes relevant free/busy info or suggested time slots)
-   - reply_outline (nullable list of bullet points — only populated when
-     read_status = read AND is_no_reply = false)
-   - reply_outline_status (e.g. none / suggested / edited / expanded_to_draft / sent)
-3. Propose interfaces/README.md documenting the expected function signature for each
-   module boundary (ingestion -> raw_email, classification -> is_no_reply, scoring ->
+1. Confirm or adjust the proposed folder structure in FILE-TREE.md against the ownership
+   map in CONTEXT.md.
+2. Confirm or adjust the ProcessedEmail schema in CONTEXT.md; write the agreed version to
+   models/schema.py.
+3. Write interfaces/README.md documenting the expected function signature for each module
+   boundary (ingestion -> raw_email, classification -> is_no_reply, scoring ->
    importance_score, summarization -> summary, calendar -> calendar_context, drafting ->
    reply_outline) so each person can build against a stub.
 4. Propose how importance will be scored (signals to combine).
@@ -111,8 +73,9 @@ Before writing code, do the following:
 7. Ask any clarifying questions (auth method for Gmail + Calendar, which account, rate
    limits, emails-per-run, read-only vs. eventually sending/creating events).
 
-Do not write implementation code yet — just the plan, schema, interfaces doc, and questions.
-Once agreed, this file is frozen — further changes go through the other two people first.
+Do not write implementation code yet beyond models/schema.py and interfaces/README.md.
+Once agreed, models/schema.py and interfaces/README.md are frozen — further changes go
+through the other two people first (see CONTEXT.md's checkpoint rules).
 ```
 
 **Confirm before splitting into tracks:** schema, interfaces doc, importance signals, no-reply detection approach, scheduling-detection approach.
@@ -122,9 +85,9 @@ Once agreed, this file is frozen — further changes go through the other two pe
 ## TRACK A (Person 1): Ingestion & Calendar
 
 ### Phase 1 — Email Ingestion
-```
-Owned files: /ingestion/ only (plus your initial contribution to models/schema.py in Phase 0).
+**Runs as: Person A only.** Owned files: `/ingestion/` (see `CONTEXT.md` for the full ownership map).
 
+```
 Implement email ingestion:
 1. Set up Gmail API auth (OAuth, token storage/refresh) — read-only scope for now.
 2. Fetch the N most recent emails (configurable): sender, subject, body (plain text,
@@ -135,13 +98,13 @@ Implement email ingestion:
 5. Handle pagination and rate-limit backoff.
 
 Test with real/sandbox emails and show the stored output before moving to Phase 1B.
-Do not touch /classification/, /scoring/, /summarization/, /drafting/, /pipeline/, or /interface/.
+Do not touch any folder outside /ingestion/.
 ```
 
 ### Phase 1B — Google Calendar Integration
-```
-Owned files: /calendar/ only.
+**Runs as: Person A only.** Owned files: `/calendar/`.
 
+```
 Implement Calendar integration:
 1. Set up Google Calendar API auth (can share the OAuth flow with Gmail if scopes allow,
    otherwise a second consent step) — read-only scope for now (freebusy + events.list).
@@ -156,8 +119,7 @@ Implement Calendar integration:
 5. CLI command to test: given a fake scheduling email, print the calendar context + suggested slots.
 
 This module doesn't need real emails yet — test with hardcoded sample email text.
-Do not touch /ingestion/, /classification/, /scoring/, /summarization/, /drafting/,
-/pipeline/, or /interface/.
+Do not touch any folder outside /calendar/.
 ```
 
 ---
@@ -165,9 +127,9 @@ Do not touch /ingestion/, /classification/, /scoring/, /summarization/, /draftin
 ## TRACK B (Person 2): Classification & Intelligence
 
 ### Phase 2 — No-Reply Detection
-```
-Owned files: /classification/ only.
+**Runs as: Person B only.** Owned files: `/classification/`.
 
+```
 Implement no-reply detection as its own module:
 1. Rule-based pass: sender patterns (no-reply@, noreply@, donotreply@, notifications@,
    alerts@), List-Unsubscribe / Auto-Submitted / Precedence: bulk headers.
@@ -177,14 +139,13 @@ Implement no-reply detection as its own module:
    with real reply-to, automated alert from a real person's shared inbox, calendar invite).
 
 Develop and test against mock RawEmail rows (don't wait on Track A's real ingestion —
-use fixtures). Do not touch /ingestion/, /calendar/, /scoring/, /summarization/,
-/drafting/, /pipeline/, or /interface/.
+use fixtures). Do not touch any folder outside /classification/.
 ```
 
 ### Phase 3 — Importance Ranking
-```
-Owned files: /scoring/ only.
+**Runs as: Person B only.** Owned files: `/scoring/`.
 
+```
 Implement importance scoring:
 1. Rule-based signals (VIP/contacts list, direct vs. CC, urgency keywords, thread
    recency, unread-and-aging decay) as agreed in Phase 0.
@@ -195,9 +156,9 @@ Test against mock/fixture data. Do not touch other tracks' folders.
 ```
 
 ### Phase 4 — Summarization
-```
-Owned files: /summarization/ only.
+**Runs as: Person B only.** Owned files: `/summarization/`.
 
+```
 Implement summarization:
 1. 1-3 sentence summary per email: what it's about, what's being asked (if anything),
    any deadline mentioned. Factual only — no inferred action items beyond what's stated/implied.
@@ -213,9 +174,9 @@ Do not touch other tracks' folders.
 ## TRACK C (Person 3): Draft Outlines & Orchestration/UI
 
 ### Phase 5 — Reply Outlines (Read + Non-No-Reply Only, Calendar-Aware)
-```
-Owned files: /drafting/ only.
+**Runs as: Person C only.** Owned files: `/drafting/`.
 
+```
 Implement reply OUTLINE generation — bullet points of what the reply should cover,
 NOT a full written-out email:
 
@@ -245,13 +206,13 @@ critical — test it explicitly.
 
 Develop against Track A/B's fixture outputs (mock ProcessedEmail + CalendarContext
 objects) so you're not blocked waiting on their real implementations.
-Do not touch /ingestion/, /calendar/, /classification/, /scoring/, /summarization/.
+Do not touch any folder outside /drafting/.
 ```
 
 ### Phase 6 — Orchestration Pipeline
-```
-Owned files: /pipeline/ only.
+**Runs as: Person C only.** Owned files: `/pipeline/`. Runs after **Checkpoint 1** (Track A's real ingestion output has replaced Track B/C's fixtures).
 
+```
 Build the end-to-end pipeline that imports from all other tracks (import only — don't
 edit their internals):
 1. Ingest (Track A) -> no-reply detection (Track B) -> importance scoring (Track B) ->
@@ -265,14 +226,13 @@ edit their internals):
    scheduling? | has outline?
 
 This is the first point real integration across all 3 tracks happens — do this as its
-own PR touching only /pipeline/, after Checkpoint 1 (Track A's real data replacing
-Track B/C's fixtures) is merged.
+own PR touching only /pipeline/.
 ```
 
 ### Phase 7 — Output / Review Interface
-```
-Owned files: /interface/ only.
+**Runs as: Person C only.** Owned files: `/interface/`.
 
+```
 Build a simple interface (CLI or minimal web view — propose one) showing:
 1. Emails sorted by importance.
 2. Summary inline.
@@ -286,14 +246,15 @@ Propose the interface approach before building it.
 
 ---
 
-## Phase 8 — Hardening & Edge Cases (all 3, on their own tracks)
+## Phase 8 — Hardening & Edge Cases
+**Runs as: all 3, each reviewing their own track's owned modules.** Runs after Phases 1–7 are merged.
 
 ```
 Each person reviews their own owned module for:
-1. (Track A) Emails with no body/attachment-only; Calendar API failures/rate limits;
+1. (Person A) Emails with no body/attachment-only; Calendar API failures/rate limits;
    ambiguous timezone handling in suggested slots.
-2. (Track B) Very long threads (summarize the thread, not just latest message); non-English emails.
-3. (Track C) Outlines going stale when a thread gets new messages after read_status
+2. (Person B) Very long threads (summarize the thread, not just latest message); non-English emails.
+3. (Person C) Outlines going stale when a thread gets new messages after read_status
    flipped; outline regeneration edge cases.
 4. All: basic logging so scores/flags/outlines are debuggable after the fact; graceful
    degradation (e.g. "summary pending" instead of a crash) on API failures.
@@ -303,10 +264,4 @@ Report back per-track before merging.
 
 ---
 
-## Notes on the design
-
-- **Why the schema/interfaces file is frozen after Phase 0:** it's the only shared surface between all three people. Treating it as append-only-with-coordination (not silently edited) is what prevents three people from stepping on each other mid-sprint.
-- **Why outlines instead of full drafts:** bullet-point outlines are cheaper to generate, faster for the user to scan/approve, and avoid the awkwardness of an AI-voiced paragraph the user has to either send as-is or heavily rewrite. Full-draft expansion is still available on demand (Phase 5, step 6) for when the user actually wants prose.
-- **Why calendar-detection is a separate cheap check before the API call:** most emails aren't scheduling-related, so gating the Calendar API call behind a fast keyword/intent check (rather than calling it for every email) keeps latency and API usage down.
-- **Why gate outlines on read status at the code level, not just prompt-level:** deterministic code checks don't drift the way prompt instructions occasionally do — important for a hard rule like "never draft for unread/no-reply emails."
-- **Fill in your stack specifics** (Gmail/Calendar scopes, DB choice, hosting) in the Project Context block before Phase 0 — better structural choices come from locking that in early.
+For the reasoning behind these design choices (why outlines instead of full drafts, why the schema freezes after Phase 0, why gating is code-level not prompt-level, etc.), see the **Design rationale** section of `CONTEXT.md`.
