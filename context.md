@@ -73,6 +73,9 @@ Work is split across 3 people to minimize merge conflicts. Everyone shares one f
 | 7 | C | Review interface (CLI or minimal web): sorted by importance, inline summary, clear no-reply flag, editable reply outline with "expand to full draft" action (human-in-the-loop, no auto-send), filters by read/unread/importance/no-reply/scheduling. |
 | 8 | All | Hardening: Track A — no-body/attachment-only emails, Calendar API failures, timezone edge cases. Track B — long-thread summarization, non-English emails. Track C — stale outlines after new thread messages, regeneration edge cases. All — logging for debuggability, graceful degradation over crashes. |
 
+## Attribution
+- The AI assistant never adds itself as an author or co-author (e.g. in commit messages, code comments, or docs) — all work is attributed solely to the human contributors.
+
 ## Design rationale (why, not just what)
 - **Schema/interfaces frozen after Phase 0**: it's the only shared surface between the three people — freezing it (append-only-with-coordination) prevents them stepping on each other mid-sprint.
 - **Outlines instead of full drafts**: cheaper to generate, faster to scan/approve, avoids an AI-voiced paragraph the user must send as-is or heavily rewrite. Full-draft expansion is still available on demand.
