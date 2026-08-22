@@ -101,6 +101,48 @@ class TestReadStatusFlip:
         assert incremental.stages_for(raw(read_status=ReadStatus.UNREAD), was_read) == ("outline",)
 
 
+class TestReadStatusFlipReprocessing:
+    """The planned 'outline' stage must actually clear a stale outline when
+    it re-runs — the schema's invariant is that reply_outline is non-None
+    only when read_status == READ, even for a user-EDITED outline."""
+
+    def test_becoming_unread_clears_even_an_edited_outline(self):
+        from drafting.outline import generate_reply_outline
+        from pipeline.orchestrate import Pipeline
+
+        existing = complete(
+            read_status=ReadStatus.READ,
+            reply_outline=["User's own edited bullet"],
+            reply_outline_status=ReplyOutlineStatus.EDITED,
+        )
+        now_unread = raw(read_status=ReadStatus.UNREAD)
+
+        stages = incremental.stages_for(now_unread, existing)
+        pipeline = Pipeline(outline=generate_reply_outline, stages=stages)
+        result = pipeline.process_one(now_unread, existing=existing, now=NOW)
+
+        assert result.reply_outline is None
+        assert result.reply_outline_status == ReplyOutlineStatus.NONE
+
+    def test_reprocessing_the_same_change_twice_is_idempotent(self):
+        from drafting.outline import generate_reply_outline
+        from pipeline.orchestrate import Pipeline
+
+        existing = complete(
+            read_status=ReadStatus.READ,
+            reply_outline=["User's own edited bullet"],
+            reply_outline_status=ReplyOutlineStatus.EDITED,
+        )
+        now_unread = raw(read_status=ReadStatus.UNREAD)
+
+        pipeline = Pipeline(outline=generate_reply_outline, stages=incremental.stages_for(now_unread, existing))
+        first = pipeline.process_one(now_unread, existing=existing, now=NOW)
+        second = pipeline.process_one(now_unread, existing=first, now=NOW)
+
+        assert first.reply_outline is None and second.reply_outline is None
+        assert first.reply_outline_status == second.reply_outline_status == ReplyOutlineStatus.NONE
+
+
 class TestPartialRecords:
     def test_missing_summary_reruns_only_summarize(self):
         assert incremental.stages_for(raw(), complete(summary=None)) == ("summarize",)

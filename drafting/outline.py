@@ -77,11 +77,14 @@ def is_eligible(processed: ProcessedEmail) -> Tuple[bool, ReplyOutlineStatus]:
                            `is_no_reply` is still None
     """
     if processed.is_no_reply:
+        log.debug("email_id=%s: not eligible (no-reply)", processed.email_id)
         return False, ReplyOutlineStatus.NOT_APPLICABLE
     if processed.read_status != ReadStatus.READ:
+        log.debug("email_id=%s: not eligible (unread)", processed.email_id)
         return False, ReplyOutlineStatus.NONE
     if processed.is_no_reply is None:
         # Unclassified: treat as ineligible rather than assume it is safe.
+        log.debug("email_id=%s: not eligible (unclassified)", processed.email_id)
         return False, ReplyOutlineStatus.NONE
     return True, ReplyOutlineStatus.SUGGESTED
 
@@ -150,4 +153,5 @@ def generate_reply_outline(
     bullets = [str(b).strip() for b in json.loads(text)["bullets"] if str(b).strip()]
 
     bullets = fold_slots_into_outline(bullets, processed, duration_minutes, tz)
+    log.debug("email_id=%s: generated %d-bullet outline", processed.email_id, len(bullets))
     return bullets, ReplyOutlineStatus.SUGGESTED
