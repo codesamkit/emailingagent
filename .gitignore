@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# Google OAuth secrets — never commit these.
+# Google's download is named client_secret_<client-id>.json; match both that
+# and the renamed form so a secret can't slip in under either name.
+credentials.json
+client_secret_*.json
+token.json
+
+# Local SQLite storage
+ingestion/data/
