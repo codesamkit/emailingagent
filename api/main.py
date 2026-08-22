@@ -171,6 +171,53 @@ def edit_outline(
     return email_to_json(persist.get(email_id, DB_PATH), include_calendar=True)
 
 
+@app.post("/api/emails/{email_id}/feedback")
+def give_feedback(
+    email_id: str,
+    level: Optional[str] = Body(None),
+    isNoReply: Optional[bool] = Body(None),
+) -> Dict[str, Any]:
+    """Record a correction and apply it immediately.
+
+    One click teaches the whole inbox: the correction is stored as a prior
+    on this email's *sender*, applied right now to every stored email from
+    that sender, and re-applied after every future pipeline run — so the
+    model's output can never silently undo it. Deterministic on purpose:
+    a stored override fixes every future email from the sender with
+    certainty, which few-shot prompt examples cannot promise.
+    """
+    email = persist.get(email_id, DB_PATH)
+    if email is None:
+        raise HTTPException(status_code=404, detail="No processed email {0!r}".format(email_id))
+    if level is None and isNoReply is None:
+        raise HTTPException(status_code=422, detail="Provide level and/or isNoReply.")
+
+    from feedback import store as feedback_store
+    from feedback.apply import apply_feedback
+    from pipeline.refresh import apply_score_spread
+
+    try:
+        if level is not None:
+            feedback_store.record(email.sender, feedback_store.KIND_LEVEL,
+                                  level, email_id=email_id, db_path=DB_PATH)
+        if isNoReply is not None:
+            feedback_store.record(email.sender, feedback_store.KIND_NO_REPLY,
+                                  "true" if isNoReply else "false",
+                                  email_id=email_id, db_path=DB_PATH)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+    changed = apply_feedback(persist.all_processed(DB_PATH), db_path=DB_PATH)
+    if changed:
+        persist.upsert(changed, DB_PATH)
+    apply_score_spread(DB_PATH)
+
+    return {
+        "email": email_to_json(persist.get(email_id, DB_PATH), include_calendar=True),
+        "affected": len(changed),
+    }
+
+
 @app.post("/api/emails/{email_id}/expand")
 def expand_draft(email_id: str) -> Dict[str, Any]:
     """Expand an approved outline into full prose.

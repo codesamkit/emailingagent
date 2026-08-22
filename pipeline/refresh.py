@@ -40,6 +40,19 @@ def apply_score_spread(db_path: Optional[Path] = None) -> int:
     return len(changed)
 
 
+def apply_feedback_priors(db_path: Optional[Path] = None) -> int:
+    """Apply the user's stored sender corrections (feedback/) to every
+    processed row. Runs before the spread pass so a pinned level gets its
+    even within-band placement like any other score. Cheap (no LLM),
+    deterministic, idempotent."""
+    from feedback.apply import apply_feedback
+
+    changed = apply_feedback(persist.all_processed(db_path), db_path=db_path)
+    if changed:
+        persist.upsert(changed, db_path)
+    return len(changed)
+
+
 def ingest_new(
     db_path: Optional[Path] = None,
     limit: Optional[int] = None,
@@ -102,14 +115,16 @@ def process_incremental(
         "summary": incremental.summarize_plan(plan_map, len(raws)),
         "written": 0,
         "respread": 0,
+        "feedbackApplied": 0,
         "errors": [],
     }
     if dry_run:
         return result
 
     if not plan_map:
-        # Nothing to reprocess, but the spread pass still runs so score
-        # distribution stays even after upgrades or manual row edits.
+        # Nothing to reprocess, but feedback + spread still run so user
+        # corrections land and score distribution stays even.
+        result["feedbackApplied"] = apply_feedback_priors(db_path)
         result["respread"] = apply_score_spread(db_path)
         return result
 
@@ -135,6 +150,9 @@ def process_incremental(
 
     result["written"] = written
     result["errors"] = errors
+    # User corrections have the last word over whatever the model just said;
+    # then the spread pass evens out the final ordering.
+    result["feedbackApplied"] = apply_feedback_priors(db_path)
     result["respread"] = apply_score_spread(db_path)
     result["totalStored"] = persist.count(db_path)
     return result

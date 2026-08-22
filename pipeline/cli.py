@@ -112,11 +112,14 @@ def cmd_process(args: argparse.Namespace) -> int:
             print("  {0}  {1}".format(email_id, ", ".join(stages)))
         return 0
     if result["planned"] == 0:
+        if result["feedbackApplied"]:
+            print("Feedback      : {0} emails corrected from your feedback".format(result["feedbackApplied"]))
         if result["respread"]:
             print("Score spread  : {0} scores re-mapped".format(result["respread"]))
         return 0
 
     print("Processed     : {0}".format(result["written"]))
+    print("Feedback      : {0} emails corrected from your feedback".format(result["feedbackApplied"]))
     print("Score spread  : {0} scores re-mapped".format(result["respread"]))
     print("Total stored  : {0}".format(result["totalStored"]))
     if result["errors"]:

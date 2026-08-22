@@ -261,6 +261,55 @@ class TestEditOutline:
         assert client.patch("/api/emails/nope/outline", json={"outline": ["x"]}).status_code == 404
 
 
+class TestFeedback:
+    def test_level_correction_applies_to_all_mail_from_the_sender(self, client):
+        response = client.post("/api/emails/read-eligible/feedback", json={"level": "low"})
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["email"]["importanceLevel"] == "low"
+        assert body["affected"] >= 2  # dana@example.com sends several fixtures
+
+        sibling = client.get("/api/emails/unread").json()
+        assert sibling["importanceLevel"] == "low"
+        assert "feedback" in sibling["importanceJustification"].lower()
+
+    def test_no_reply_correction_strips_the_outline(self, client):
+        response = client.post("/api/emails/read-eligible/feedback", json={"isNoReply": True})
+
+        assert response.status_code == 200
+        body = response.json()["email"]
+        assert body["isNoReply"] is True
+        assert body["replyOutline"] is None
+        assert body["replyOutlineStatus"] == "not_applicable"
+
+    def test_correction_survives_a_reprocess(self, client, tmp_path):
+        """The loop part of the feedback loop: pipeline runs re-apply the
+        prior, so the model can never silently undo a correction."""
+        from pipeline.refresh import apply_feedback_priors
+
+        client.post("/api/emails/read-eligible/feedback", json={"level": "low"})
+        db_path = main.DB_PATH
+
+        # Simulate the model re-scoring the row back to urgent on a later run.
+        row = persist.get("read-eligible", db_path)
+        row.importance_level = ImportanceLevel.URGENT
+        row.importance_score = 90.0
+        persist.upsert([row], db_path)
+
+        assert apply_feedback_priors(db_path) >= 1
+        assert persist.get("read-eligible", db_path).importance_level == ImportanceLevel.LOW
+
+    def test_rejects_empty_and_garbage(self, client):
+        assert client.post("/api/emails/read-eligible/feedback", json={}).status_code == 422
+        assert client.post(
+            "/api/emails/read-eligible/feedback", json={"level": "megaurgent"}
+        ).status_code == 422
+
+    def test_unknown_id_is_404(self, client):
+        assert client.post("/api/emails/nope/feedback", json={"level": "low"}).status_code == 404
+
+
 class TestIndexPage:
     def test_root_serves_the_review_ui(self, client):
         response = client.get("/")
