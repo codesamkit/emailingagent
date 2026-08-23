@@ -8,6 +8,7 @@ channel silently dominate. RRF only ever looks at each channel's rank order.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -20,6 +21,8 @@ try:
     import numpy as np
 except ImportError:  # pragma: no cover - numpy is a declared dependency
     np = None
+
+log = logging.getLogger(__name__)
 
 _RRF_K = 60
 
@@ -135,7 +138,16 @@ def _embed_query(query: str) -> Optional[bytes]:
         from llm.embeddings import embed_texts
     except ImportError:
         return None
-    return embed_texts([query])[0]
+    try:
+        return embed_texts([query])[0]
+    except Exception as exc:  # noqa: BLE001 - any backend failure, not just one
+        # Only the import was guarded before, so an unreachable embedding
+        # backend (ollama not running) raised straight out of search() and
+        # took BM25 and the graph walk down with it -- channels that need no
+        # embeddings at all. Degrading to those is the whole point of a
+        # hybrid retriever.
+        log.warning("embedding backend unavailable, skipping vector channel: %s", exc)
+        return None
 
 
 def _vector(query: str, k: int, *, db_path: Optional[Path] = None) -> List[ScoredChunk]:

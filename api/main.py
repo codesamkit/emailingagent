@@ -563,13 +563,15 @@ def agent_chat(body: AgentChatBody) -> StreamingResponse:
     turns) is persisted via agent.conversation.append, so the next chat call
     against the same conversationId continues with full history.
 
-    A provider misconfiguration (agent routed to ollama, which has no
-    tool-calling support) surfaces as a `{"type": "error", ...}` event
-    inside the stream rather than an HTTP error status — by the time that
-    failure is known, the 200 response has already started.
+    Any failure — a provider misconfiguration (agent routed to ollama,
+    which has no tool-calling support), an upstream API error, a tool that
+    raises — surfaces as a `{"type": "error", ...}` event inside the stream
+    rather than an HTTP error status: by the time the failure is known, the
+    200 response has already started. Letting one escape the generator
+    instead truncates the SSE body mid-stream, which the client can only
+    report as an unexplained network error.
     """
     from agent import conversation as agent_conversation
-    from agent.loop import OllamaToolsUnsupportedError
     from agent.loop import run as run_agent
 
     conversation_id = body.conversationId or agent_conversation.create(db_path=DB_PATH)
@@ -587,8 +589,12 @@ def agent_chat(body: AgentChatBody) -> StreamingResponse:
                 yield "data: {0}\n\n".format(
                     json.dumps(_agent_event_to_json(event, conversation_id))
                 )
-        except OllamaToolsUnsupportedError as exc:
-            yield "data: {0}\n\n".format(json.dumps({"type": "error", "error": str(exc)}))
+        except Exception as exc:
+            # Logged with a traceback for the server operator; the client
+            # gets the message so a misconfiguration is self-explaining.
+            log.exception("Agent chat failed (conversation %s)", conversation_id)
+            message = str(exc) or exc.__class__.__name__
+            yield "data: {0}\n\n".format(json.dumps({"type": "error", "error": message}))
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 

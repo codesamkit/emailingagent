@@ -462,10 +462,11 @@
     ensurePanel();
     const nodes = document.querySelectorAll("[data-legacy-message-id]");
     if (!nodes.length) {
-      if (currentEmailId !== null) {
-        currentEmailId = null;
-        showMessage("Open an email to see its analysis — or use the Inbox tab.");
-      }
+      // Drive the empty state off the actual condition (no message open), not
+      // off a state transition -- on first load currentEmailId is already null,
+      // so a transition guard here left the default Email pane blank.
+      currentEmailId = null;
+      showMessage("Open an email to see its analysis — or use the Inbox tab.");
       return;
     }
     const emailId = nodes[nodes.length - 1].getAttribute("data-legacy-message-id");

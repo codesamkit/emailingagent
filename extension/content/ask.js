@@ -6,7 +6,8 @@
 //
 // All model output goes through textContent, never innerHTML — this renders
 // arbitrary text inside the user's mail client, an injection surface (see
-// the note in detail.js).
+// the note in detail.js). Assistant text is markdown, so it goes through
+// content/markdown.js, which builds nodes and keeps that same rule.
 
 const EmailAgentAsk = (() => {
   let container = null;
@@ -101,7 +102,11 @@ const EmailAgentAsk = (() => {
     stopStream = EmailAgent.chatStream(message, conversationId, (event) => {
       if (event.type === "text_delta") {
         text += event.text || "";
-        textEl.textContent = text;
+        // The agent answers in markdown (headings, bullets, bold); textContent
+        // showed the literal "## " and "**" to the user. Re-rendered from the
+        // full accumulated text each delta rather than appended to, so a run
+        // spanning two deltas still resolves.
+        EmailAgentMarkdown.render(text, textEl);
         listEl.scrollTop = listEl.scrollHeight;
       } else if (event.type === "tool_start") {
         statusEl.textContent = `using ${event.tool}…`;

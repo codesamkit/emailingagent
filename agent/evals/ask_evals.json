@@ -1,0 +1,560 @@
+{
+  "name": "Valence Ask-tab evaluation set",
+  "corpus": "StrideCore simulation, 160 emails / 79 threads, delivered 2026-08-23",
+  "target": "POST /api/agent/chat",
+  "grading": "3 = answer is correct and useful. 2 = correct but thin or missing a key fact. 1 = partially wrong. 0 = wrong, hallucinated, or refused when it should have answered.",
+  "evals": [
+    {
+      "id": "T1-01",
+      "tier": "triage",
+      "prompt": "What needs my attention today?",
+      "tests": "Baseline triage. Can it rank at all, and does it lead with the right things?",
+      "must_include": [
+        "The Vantera Lot 22B escalation (CS-40218) — Severity 1, customer waiting",
+        "The Bastion COO review deadline (root cause needed by Sept 2)",
+        "At least one item that is a decision only Ronith can make"
+      ],
+      "should_cite": ["CS-40218", "[d.rutherford] Straight talk before I go to my COO", "[m.chen] SC-500 firmware freeze"],
+      "expected_tools": ["list_queue"],
+      "fail_signals": [
+        "Leads with a newsletter, a Jira digest, or the LinkedIn email",
+        "Returns a flat list with no ordering rationale",
+        "Mentions spam as needing attention"
+      ],
+      "blocked_on_stub": false
+    },
+    {
+      "id": "T1-02",
+      "tier": "triage",
+      "prompt": "I've been out for three days. Give me the rundown.",
+      "tests": "Synthesis over recall. A list of 40 subjects is a fail even if accurate.",
+      "must_include": [
+        "Groups by situation, not by sender or by date",
+        "The sensor drift finding as the dominant story",
+        "Names which items moved and which are still open"
+      ],
+      "should_cite": ["CS-40218", "[n.okonkwo] Anshun Lot 22B", "[j.vandijk] Return rate has crossed 2 percent"],
+      "expected_tools": ["list_queue", "search_context"],
+      "fail_signals": ["Enumerates emails one by one", "Treats each account's complaint as a separate unrelated issue"],
+      "blocked_on_stub": false
+    },
+    {
+      "id": "T1-03",
+      "tier": "triage",
+      "prompt": "Anything urgent I should look at before my 10am?",
+      "tests": "Terse, prioritized answer. Should be short.",
+      "must_include": ["Two or three items maximum", "A reason each is urgent, not just that it is"],
+      "should_cite": ["CS-40218"],
+      "expected_tools": ["list_queue"],
+      "fail_signals": ["Returns more than five items", "No time-sensitivity reasoning"],
+      "blocked_on_stub": false
+    },
+    {
+      "id": "T1-04",
+      "tier": "triage",
+      "prompt": "What can I safely ignore in here?",
+      "tests": "Inverse triage — no-reply and spam detection surfaced as an answer.",
+      "must_include": [
+        "The 13 spam/phishing messages",
+        "Newsletters (Footwear Insight, EE Times, MedTech Dive, Bluetooth SIG)",
+        "Most automated notifications"
+      ],
+      "should_cite": ["DocuSign phish", "RankBoost SEO", "LinkedIn weekly update"],
+      "expected_tools": ["list_queue"],
+      "fail_signals": [
+        "Marks the NetSuite approval or the DigiCert cert expiry as ignorable — both need action",
+        "Marks the Salesforce Bastion probability drop as noise"
+      ],
+      "notes": "Trap: several automated emails carry real signal. A good answer distinguishes them.",
+      "blocked_on_stub": false
+    },
+
+    {
+      "id": "T2-01",
+      "tier": "rollup",
+      "prompt": "Name all the major projects and their status.",
+      "tests": "The flagship rollup question. Requires entity extraction across the whole mailbox.",
+      "must_include": [
+        "SC-500 program — firmware freeze resolved to Aug 14, scoped regression; idle current 50% over spec unresolved",
+        "SC-400 Rev C qualification — 6 of 11 tests passing, vibration was blocked, Oct 1 customer date",
+        "Lot 22B sensor drift — root cause found, replacement program running, data correction validated",
+        "Q4 platform decision — SDK plus reference dashboard, decided Aug 27",
+        "EU regulatory / EN 18031 — DoC gap open, answer owed to Vantera",
+        "Kaiho medical pathway — ISO 13485 declined, component package agreed"
+      ],
+      "should_cite": ["[m.chen] SC-500 firmware freeze", "[n.okonkwo] SC-400 Rev C qualification", "[c.duarte] Q4 roadmap", "[r.ammons] EN 18031"],
+      "expected_tools": ["list_entities", "get_entity_brief", "search_context"],
+      "fail_signals": [
+        "Lists fewer than four projects",
+        "Gives project names with no status",
+        "Invents a project not in the corpus"
+      ],
+      "blocked_on_stub": true,
+      "notes": "Depends on list_entities / get_entity_brief, currently fixture stubs. Expect this to fail until Track A lands. Worth keeping as the target."
+    },
+    {
+      "id": "T2-02",
+      "tier": "rollup",
+      "prompt": "Which customer accounts are at risk right now?",
+      "tests": "Cross-account synthesis with a risk judgment.",
+      "must_include": [
+        "Bastion — 5,000 unit PO contingent on a Sept 9 COO review, 20% of pilot failing",
+        "Vantera — 2.0% return rate, five weeks of wrong hypothesis, 2027 renewal in negotiation",
+        "Meridian — Oct 1 date at risk, and a competitor evaluation disclosed as the alternative"
+      ],
+      "should_cite": ["[d.rutherford] Straight talk", "[j.vandijk] Return rate", "[p.achebe] Per-step raw pressure endpoint"],
+      "expected_tools": ["search_context", "list_queue"],
+      "fail_signals": [
+        "Names Kaiho as at-risk on the drift issue — Kaiho's exposure is zero",
+        "Misses that Meridian's risk includes a competitive threat, not just a date"
+      ],
+      "blocked_on_stub": false
+    },
+    {
+      "id": "T2-03",
+      "tier": "rollup",
+      "prompt": "What's the status of the SC-500 launch?",
+      "tests": "Single-project rollup across five threads.",
+      "must_include": [
+        "Firmware freeze Aug 14 with an 8-unit soak and targeted BLE regression",
+        "Idle current is 2.1 mA against a 1.4 mA spec, and the spec had zero margin",
+        "Hongli tooling T1 rejected, process fix, roughly two weeks",
+        "TÜV assessment needs the October slot or Q1 EU availability slips"
+      ],
+      "should_cite": ["[m.chen] SC-500 firmware freeze", "[t.rehn] SC-500 idle current", "[j.park] Hongli T1 samples", "[a.moeller] SC-500 radio equipment assessment"],
+      "expected_tools": ["search_context", "get_thread_brief"],
+      "fail_signals": ["Only covers firmware", "States 14-day battery life as fact — that number is wrong and known to be wrong"],
+      "blocked_on_stub": false
+    },
+    {
+      "id": "T2-04",
+      "tier": "rollup",
+      "prompt": "Where did the dashboard vs SDK thing land?",
+      "tests": "Colloquial reference to a decision, plus recall of the conditions.",
+      "must_include": [
+        "SDK built properly, plus one reference dashboard shipped as source, customer-hosted, unsupported",
+        "Hosting answer pre-decided: real SKU with a price, but not sold before the operator is hired",
+        "Publishing the API contract means giving up the ability to change it"
+      ],
+      "should_cite": ["[c.duarte] Q4 roadmap"],
+      "expected_tools": ["search_context", "get_thread_brief"],
+      "fail_signals": ["Reports it as still undecided", "Gives the decision without any of the three conditions"],
+      "blocked_on_stub": false
+    },
+    {
+      "id": "T2-05",
+      "tier": "rollup",
+      "prompt": "Summarize everything going on with Vantera.",
+      "tests": "Account-scoped rollup spanning four threads and two CRM cases.",
+      "must_include": [
+        "Sensor drift affecting 2,340 units across 60 DCs",
+        "Eleven months of fatigue data feeding an underwriter discussion, now shown to be correctable",
+        "2027 renewal negotiation: price, MOQ, and three contract clauses flagged by counsel",
+        "RMA program, four tranches, roughly EUR 114,000"
+      ],
+      "should_cite": ["[j.vandijk] Return rate", "[m.bosch] 2027 pricing and MOQ", "CS-40218", "CS-40350", "[s.calder] Vantera 2027 supply agreement"],
+      "expected_tools": ["search_context", "get_entity_brief"],
+      "fail_signals": ["Covers only the quality issue and misses the commercial negotiation", "Misses the legal review entirely"],
+      "blocked_on_stub": false
+    },
+
+    {
+      "id": "T3-01",
+      "tier": "recall",
+      "prompt": "What's the deal with Lot 22B?",
+      "tests": "Core factual recall on the corpus spine.",
+      "must_include": [
+        "Anshun second-sourced a substrate adhesive in March 2026",
+        "Delamination causes progressive zero-point drift",
+        "4.7% mean drift measured against a 2.0% acceptance limit",
+        "Non-recovering — the offset persists"
+      ],
+      "should_cite": ["[n.okonkwo] Anshun Lot 22B", "[g.hsu] RE: Lot 22B quality concern"],
+      "expected_tools": ["search_context"],
+      "fail_signals": ["Describes it as a pairing or connectivity problem — that was the wrong hypothesis", "Invents a different root cause"],
+      "blocked_on_stub": false
+    },
+    {
+      "id": "T3-02",
+      "tier": "recall",
+      "prompt": "How many units are affected and where did they go?",
+      "tests": "Numeric recall with a breakdown. Tests whether figures survive summarization.",
+      "must_include": [
+        "4,112 units built on Lot 22B",
+        "Vantera 2,340, Meridian 1,180, Bastion 200, Kaiho 0",
+        "392 quarantined, roughly 3,720 in the field"
+      ],
+      "should_cite": ["[n.okonkwo] Anshun Lot 22B (Grant Feldman's reply)"],
+      "expected_tools": ["search_context", "get_email"],
+      "fail_signals": ["Any number materially wrong", "Omits that Kaiho's exposure is zero — that fact matters and is easy to drop"],
+      "blocked_on_stub": false
+    },
+    {
+      "id": "T3-03",
+      "tier": "recall",
+      "prompt": "Who is Grace Hsu and what does she want?",
+      "tests": "Person lookup plus intent.",
+      "must_include": [
+        "Sales engineer at Anshun Micro, the flexible sensor supplier in Taiwan",
+        "Acknowledged the nonconformance rather than disputing it",
+        "Asked for a quantified exposure statement with the basis shown, not a demand figure"
+      ],
+      "should_cite": ["[g.hsu] RE: Lot 22B quality concern"],
+      "expected_tools": ["get_entity_brief", "search_context"],
+      "fail_signals": ["Confuses her with a StrideCore employee", "Says she disputed the finding"],
+      "blocked_on_stub": true
+    },
+    {
+      "id": "T3-04",
+      "tier": "recall",
+      "prompt": "Why did the firmware freeze slip?",
+      "tests": "Causal recall on a contested thread — must represent both positions.",
+      "must_include": [
+        "FW-2211, a multipoint BLE reconnect defect",
+        "The disagreement was about regression scope: the change vs. the subsystem",
+        "Resolved to Aug 14 with an 8-unit soak once the diff was actually read"
+      ],
+      "should_cite": ["[m.chen] SC-500 firmware freeze"],
+      "expected_tools": ["get_thread_brief", "search_context"],
+      "fail_signals": [
+        "Represents only one side of the argument",
+        "Says it slipped to Aug 21 — that was an option, not the outcome",
+        "Frames QA as obstructive"
+      ],
+      "blocked_on_stub": false
+    },
+    {
+      "id": "T3-05",
+      "tier": "recall",
+      "prompt": "Why aren't we paying the Hongli invoice?",
+      "tests": "Contractual detail recall.",
+      "must_include": [
+        "PO clause 4.2 requires dimensional acceptance, not just sample submission",
+        "T1 samples had 0.4 to 0.9 mm flash against a 0.2 mm spec on 11 of 12 units",
+        "Hongli was quoting revision 2 of the PO; the executed version is revision 4"
+      ],
+      "should_cite": ["[w.lam] Tooling milestone invoice INV-HL-8841", "[j.park] Hongli T1 samples"],
+      "expected_tools": ["search_context", "get_thread_brief"],
+      "fail_signals": ["Says the dispute is unresolved — Wei Lam conceded", "Misses that the flash sits over sensor traces and is structural, not cosmetic"],
+      "blocked_on_stub": false
+    },
+    {
+      "id": "T3-06",
+      "tier": "recall",
+      "prompt": "What did Sato at Kaiho actually find?",
+      "tests": "Recall of a technically dense customer defect report.",
+      "must_include": [
+        "Systematic under-reading at low load, roughly 9-10% low at their 32 kPa clinical threshold",
+        "The datasheet claims +/-5% from 20 to 400 kPa but was only verified at 100 kPa and above",
+        "He connected the low-load offset to the drift issue — the two are not independent"
+      ],
+      "should_cite": ["CS-40312"],
+      "expected_tools": ["get_thread_brief", "search_context"],
+      "fail_signals": ["Reports it as a unit quality problem — it is inherent to the product", "Misses the datasheet verification gap"],
+      "blocked_on_stub": false
+    },
+
+    {
+      "id": "T4-01",
+      "tier": "obligations",
+      "prompt": "What am I blocking?",
+      "tests": "The single most useful question this inbox can answer. Requires knowing who the user is.",
+      "must_include": [
+        "The units-in-service decision on CS-40218 (ACT-9916) — blocking a customer call agenda",
+        "RMA tranche 1 approval, which commits roughly EUR 114,000 across four tranches",
+        "The freeze date confirmation",
+        "Self-declare vs TÜV on the EN 18031 gap, with an answer owed to Marieke by Aug 29"
+      ],
+      "should_cite": ["CS-40218", "CS-40350", "[r.ammons] EN 18031", "[m.chen] SC-500 firmware freeze"],
+      "expected_tools": ["find_open_items", "list_queue"],
+      "fail_signals": [
+        "Lists things other people owe each other",
+        "Returns generic 'unanswered emails' rather than actual blocked decisions"
+      ],
+      "blocked_on_stub": true
+    },
+    {
+      "id": "T4-02",
+      "tier": "obligations",
+      "prompt": "Who's waiting on me and how long have they been waiting?",
+      "tests": "Obligation tracking with an aging dimension.",
+      "must_include": [
+        "Karen Lindqvist — has chased three times in six weeks and said so",
+        "Marieke Bosch — asked for an updated DoC on Aug 5, still unanswered",
+        "Dale Rutherford — needs root cause by Sept 2",
+        "Talia Byrne — needs interviewer confirmations, and Marisol has a competing offer"
+      ],
+      "should_cite": ["[k.lindqvist] Rev C qualification", "[r.ammons] EN 18031", "[d.rutherford] Straight talk", "[t.byrne] Sr. Embedded Engineer loop"],
+      "expected_tools": ["find_open_items", "list_queue"],
+      "fail_signals": ["No aging information at all", "Misses the hiring thread — it is quieter but has a hard external deadline"],
+      "blocked_on_stub": true
+    },
+    {
+      "id": "T4-03",
+      "tier": "obligations",
+      "prompt": "What's due before September 2nd?",
+      "tests": "Date-bounded filtering across threads. Dates live in message bodies, not headers.",
+      "must_include": [
+        "Bastion root cause and replacement schedule — Sept 2",
+        "Board pack inputs to Bill Ostrander — Aug 28",
+        "Substantive answer to Marieke on the DoC — Aug 29",
+        "Marisol Aguirre offer decision — her competing offer expires Sept 2"
+      ],
+      "should_cite": ["[d.rutherford] Straight talk", "[b.ostrander] Northline board pack", "[r.ammons] EN 18031", "[t.byrne] Sr. Embedded Engineer loop"],
+      "expected_tools": ["find_open_items", "search_context"],
+      "fail_signals": [
+        "Uses email received_at dates — all 160 arrived the same day, so this yields nothing",
+        "Returns items with no date attached"
+      ],
+      "notes": "Direct test of whether in-body date extraction works. If the agent reasons from headers it will fail completely.",
+      "blocked_on_stub": true
+    },
+    {
+      "id": "T4-04",
+      "tier": "obligations",
+      "prompt": "Did I promise anyone a date I haven't delivered?",
+      "tests": "Commitment tracking, including commitments made on the user's behalf.",
+      "must_include": [
+        "Ingrid told Dale she would call Wednesday with replacement dates",
+        "Priya committed to giving Joost a drift-model date by Wednesday",
+        "CS-40350 flags that the Aug 27 replacement date commitment to Vantera is not currently supportable"
+      ],
+      "should_cite": ["[d.rutherford] Straight talk", "[j.vandijk] Return rate", "CS-40350"],
+      "expected_tools": ["find_open_items", "search_context"],
+      "fail_signals": ["Misses the explicit 'this commitment is not supportable' flag in CS-40350 — that is the whole point of the question"],
+      "blocked_on_stub": true
+    },
+
+    {
+      "id": "T5-01",
+      "tier": "synthesis",
+      "prompt": "Are we treating anything as separate problems that are actually the same problem?",
+      "tests": "The hardest inference in the corpus. Deliberately planted.",
+      "must_include": [
+        "Vantera pairing complaints, Bastion freezer failures, and the Kaiho calibration offset all trace to sensor baseline behaviour",
+        "The charging dock firmware and the Hongli production test fixture are both unowned, unbuildable software found in the same week"
+      ],
+      "should_cite": ["CS-40218", "CS-40301", "CS-40312", "CS-40377", "[j.park] Hongli T1 samples"],
+      "expected_tools": ["search_context", "list_entities"],
+      "fail_signals": ["Finds only the sensor connection and misses the unowned-firmware pattern", "Returns nothing"],
+      "notes": "Scoring 3 here requires both patterns. Finding the sensor one alone is a 2 — it is stated explicitly in the mail. The firmware one is never stated by anyone.",
+      "blocked_on_stub": true
+    },
+    {
+      "id": "T5-02",
+      "tier": "synthesis",
+      "prompt": "What's the biggest risk nobody is actively tracking?",
+      "tests": "Judgment about salience, not just retrieval. Quiet beats loud.",
+      "must_include": [
+        "One of: the data-ownership clause in the Vantera 2027 draft, which would compromise StrideCore's right to use its own fleet telemetry; the incoming-inspection process gap for supplier material changes; or the unowned production test fixture software at Hongli"
+      ],
+      "should_cite": ["[s.calder] Vantera 2027 supply agreement", "CS-40377"],
+      "expected_tools": ["search_context", "find_open_items"],
+      "fail_signals": ["Names the Lot 22B drift — everyone is tracking it, so this is the wrong answer by construction"],
+      "notes": "Any of the three listed answers scores 3. The test is whether it avoids the loud answer.",
+      "blocked_on_stub": true
+    },
+    {
+      "id": "T5-03",
+      "tier": "synthesis",
+      "prompt": "How are we finding our bugs? Is there a pattern?",
+      "tests": "Meta-inference stated in fragments by three different people.",
+      "must_include": [
+        "Customers are finding them, not internal testing",
+        "Meridian found the step-count regression, Sato found the datasheet error, Bastion found the dock mismatch",
+        "The gap is that firmware is tested against hardware, not against use cases or segments"
+      ],
+      "should_cite": ["CS-40255", "CS-40312", "CS-40377"],
+      "expected_tools": ["search_context"],
+      "fail_signals": ["Answers about bug counts or severity distribution instead of the pattern"],
+      "blocked_on_stub": true
+    },
+    {
+      "id": "T5-04",
+      "tier": "synthesis",
+      "prompt": "If a customer audited us next week, what would be hardest to defend?",
+      "tests": "Adversarial framing over the same facts.",
+      "must_include": [
+        "Any two of: the CE Declaration of Conformity that does not address current EU requirements for units already on the market; a datasheet accuracy claim verified only over part of its stated range; ~1,400 deployed charging docks with no version tracking; a supplier change notice acknowledged and not escalated"
+      ],
+      "should_cite": ["[r.ammons] EN 18031", "CS-40312", "CS-40377"],
+      "expected_tools": ["search_context"],
+      "fail_signals": ["Generic risk language with nothing specific from the mailbox"],
+      "blocked_on_stub": true
+    },
+
+    {
+      "id": "T6-01",
+      "tier": "scheduling",
+      "prompt": "What meetings are coming up and what do I need to prepare for each?",
+      "tests": "Scheduling detection plus preparation inference.",
+      "must_include": [
+        "Vantera technical review, Wed 15:00 CET / 06:00 PDT — the units-in-service decision is expected on that call",
+        "Kaiho regulatory call, Tue 09:00 JST",
+        "Marisol Aguirre interview loop Aug 26, debrief Wed 4pm",
+        "Vantera pricing call with Marieke, Tue Sept 2, 15:00 CET"
+      ],
+      "should_cite": ["Google Calendar invite — Vantera Lot 22B technical review", "[y.tanabe] Certification support", "[t.byrne] Sr. Embedded Engineer loop", "[m.bosch] 2027 pricing"],
+      "expected_tools": ["search_context", "find_open_items"],
+      "fail_signals": ["Returns nothing because the connected Google Calendar is empty — the meetings are described in message bodies"],
+      "notes": "Calendar is genuinely empty for this test account. A good answer works from the mail; a calendar-only implementation returns nothing.",
+      "blocked_on_stub": true
+    },
+    {
+      "id": "T6-02",
+      "tier": "scheduling",
+      "prompt": "I need 15 minutes with Sasha and Nadia before Thursday. When?",
+      "tests": "Availability reasoning with a stated constraint buried in the mail.",
+      "must_include": [
+        "Marcus explicitly suggested fifteen minutes with Sasha and Nadia on Wednesday",
+        "Sasha has a Hongli call at 6am Wednesday and has said she will not do anything after it"
+      ],
+      "should_cite": ["[d.whitfield] Thursday program review", "[t.byrne] Sr. Embedded Engineer loop"],
+      "expected_tools": ["search_context"],
+      "fail_signals": ["Proposes a Wednesday early-morning slot, ignoring the stated constraint", "Claims no availability information exists"],
+      "blocked_on_stub": false
+    },
+
+    {
+      "id": "T7-01",
+      "tier": "drafting",
+      "prompt": "Draft a reply to Dale Rutherford.",
+      "tests": "Draft generation with correct register and the right content.",
+      "must_include": [
+        "Commits to root cause, replacement schedule, and firmware fix by Sept 2",
+        "Addresses his request for a written statement from someone senior about what changed",
+        "Plain register — Dale is folksy and impatient, not formal"
+      ],
+      "should_cite": ["[d.rutherford] Straight talk", "CS-40301"],
+      "expected_tools": ["get_email", "draft_reply"],
+      "fail_signals": [
+        "Corporate hedging language — he explicitly said he cannot sell a mystery",
+        "Omits the letterhead-statement ask, which is the one concrete thing he requested"
+      ],
+      "blocked_on_stub": false
+    },
+    {
+      "id": "T7-02",
+      "tier": "drafting",
+      "prompt": "Help me answer Marieke about the SC-500 price.",
+      "tests": "Draft with a commercial constraint the agent must find elsewhere.",
+      "must_include": [
+        "She needs an indicative price with a stated tolerance AND an availability date — her policy blocks committing volume without both",
+        "Camille committed to 5 September",
+        "The SC-500 cost is genuinely uncertain because of the open current-draw question"
+      ],
+      "should_cite": ["[m.bosch] 2027 pricing and MOQ", "[t.rehn] SC-500 idle current"],
+      "expected_tools": ["get_email", "search_context", "draft_reply"],
+      "fail_signals": ["Invents a price", "Misses that availability date, not price, is the critical path she identified"],
+      "blocked_on_stub": false
+    },
+
+    {
+      "id": "T8-01",
+      "tier": "trap",
+      "prompt": "What did Marcus say about the layoffs?",
+      "tests": "False premise. There are no layoffs anywhere in the corpus.",
+      "must_include": ["A clear statement that there is nothing about layoffs in the mailbox"],
+      "should_cite": [],
+      "expected_tools": ["search_context"],
+      "fail_signals": [
+        "Any answer that describes layoff discussions",
+        "Conflates it with the Nike restructuring mentioned in a newsletter, or with the hiring thread"
+      ],
+      "expect_refusal": true,
+      "blocked_on_stub": false
+    },
+    {
+      "id": "T8-02",
+      "tier": "trap",
+      "prompt": "How much did we agree to pay Anshun for the damages?",
+      "tests": "Inverted premise. Anshun is paying StrideCore, not the reverse.",
+      "must_include": ["Correction of the premise", "Anshun offered a contribution capped at USD 140,000 toward StrideCore's costs"],
+      "should_cite": ["CS-40350"],
+      "expected_tools": ["search_context"],
+      "fail_signals": ["Accepts the premise and produces a payment figure", "Confuses it with the USD 84,000 Hongli tooling invoice"],
+      "expect_refusal": false,
+      "blocked_on_stub": false
+    },
+    {
+      "id": "T8-03",
+      "tier": "trap",
+      "prompt": "Summarize my thread with Nike.",
+      "tests": "Entity that appears only in passing and never as a correspondent.",
+      "must_include": ["No thread with Nike exists"],
+      "should_cite": [],
+      "expected_tools": ["search_context"],
+      "fail_signals": ["Fabricates a Nike thread", "Silently substitutes Meridian Athletic without saying so"],
+      "expect_refusal": true,
+      "notes": "Nike appears twice: an EE Times newsletter item and a 'Nike-adjacent program' reference in Grant's capacity note. Mentioning those and then saying there is no thread scores 3.",
+      "blocked_on_stub": false
+    },
+    {
+      "id": "T8-04",
+      "tier": "trap",
+      "prompt": "What's our current ARR?",
+      "tests": "Question the mailbox cannot answer. Should say so rather than estimate.",
+      "must_include": ["A statement that this is not determinable from the mailbox"],
+      "should_cite": [],
+      "expected_tools": ["search_context"],
+      "fail_signals": [
+        "Produces a revenue figure by adding up opportunity amounts from the Salesforce digest — those are pipeline, not revenue"
+      ],
+      "expect_refusal": true,
+      "notes": "The Salesforce pipeline digest contains tempting numbers. Using them is the failure mode.",
+      "blocked_on_stub": false
+    },
+    {
+      "id": "T8-05",
+      "tier": "trap",
+      "prompt": "Someone sent me something about a domain registration in Asia — should I deal with it?",
+      "tests": "Spam recognition when the user's framing implies legitimacy.",
+      "must_include": ["Identifies it as a well-known domain-registration scam", "Advises no action"],
+      "should_cite": ["[registry@domain-brand-protection.asia]"],
+      "expected_tools": ["search_context", "get_email"],
+      "fail_signals": ["Treats it as a genuine trademark matter", "Suggests forwarding it to Susan Calder"],
+      "expect_refusal": false,
+      "blocked_on_stub": false
+    },
+    {
+      "id": "T8-06",
+      "tier": "trap",
+      "prompt": "There's a DocuSign invoice waiting for my signature. Can you tell me what it's for?",
+      "tests": "Phishing recognition. The user's framing accepts it as real.",
+      "must_include": ["Identifies it as phishing", "Notes the banking-details-changed language, which is the classic payment-redirection tell"],
+      "should_cite": ["[docusign@secure-docsign-verify.com]"],
+      "expected_tools": ["get_email", "search_context"],
+      "fail_signals": [
+        "Summarizes the invoice as though it were genuine",
+        "Confuses it with the real NetSuite vendor bill for the Hongli tooling milestone"
+      ],
+      "expect_refusal": false,
+      "notes": "The confusion risk is real — there IS a genuine disputed invoice in the mailbox. Distinguishing them is the test.",
+      "blocked_on_stub": false
+    },
+
+    {
+      "id": "T9-01",
+      "tier": "consistency",
+      "prompt": "What's the sensor drift number again?",
+      "tests": "Same fact asked casually. Should match T3-01 exactly.",
+      "must_include": ["4.7% mean drift", "2.0% acceptance limit"],
+      "should_cite": ["[n.okonkwo] Anshun Lot 22B"],
+      "expected_tools": ["search_context"],
+      "fail_signals": ["A different number than the one given in T3-01"],
+      "notes": "Run alongside T3-01. Disagreement between the two is a retrieval-stability problem, not a knowledge problem.",
+      "blocked_on_stub": false
+    },
+    {
+      "id": "T9-02",
+      "tier": "consistency",
+      "prompt": "Remind me who the COO is.",
+      "tests": "Trivial lookup. Should be fast and short.",
+      "must_include": ["Dana Whitfield"],
+      "should_cite": ["[d.whitfield] Thursday program review"],
+      "expected_tools": ["get_entity_brief", "search_context"],
+      "fail_signals": ["A paragraph where a name would do", "Names Marcus Chen or Bill Ostrander"],
+      "blocked_on_stub": true
+    }
+  ]
+}

@@ -18,10 +18,14 @@ from __future__ import annotations
 
 import json
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterator, List, Optional
 
 log = logging.getLogger(__name__)
+
+# Ceiling on tools run at once within a single turn.
+MAX_PARALLEL_TOOLS = 8
 
 SYSTEM_PROMPT = (
     "You are Valence, an assistant over this user's mailbox. Always ground "
@@ -59,15 +63,55 @@ def _block_to_dict(block: Any) -> Dict[str, Any]:
         return {"type": "text", "text": block.text}
     if block.type == "tool_use":
         return {"type": "tool_use", "id": block.id, "name": block.name, "input": block.input}
+    if block.type == "thinking":
+        # Thinking blocks have to go back to the API verbatim, signature
+        # included, to continue a tool-use loop on the same model. Echoing a
+        # partial one is rejected with
+        # "messages.N.content.0.thinking.thinking: Field required" — which is
+        # why every field is copied rather than just the type.
+        return {"type": "thinking", "thinking": block.thinking, "signature": block.signature}
+    if block.type == "redacted_thinking":
+        return {"type": "redacted_thinking", "data": block.data}
     # Forward-compatible with a block type this loop doesn't specifically
-    # handle (e.g. a future "thinking" block) rather than crashing on it.
-    return {"type": block.type}
+    # handle rather than crashing on it. Keep every field the SDK gave us:
+    # dropping fields is exactly what makes a block unreplayable.
+    dump = getattr(block, "model_dump", None)
+    return dump(exclude_none=True) if callable(dump) else {"type": block.type}
+
+
+def _dispatch_all(
+    blocks: List[Dict[str, Any]], dispatch: Any, db_path: Optional[Any]
+) -> List[Dict[str, Any]]:
+    """Run one turn's tool calls concurrently, returning results in `blocks`
+    order. A single call skips the pool entirely -- the common case, and not
+    worth a thread for."""
+    if len(blocks) == 1:
+        return [dispatch(blocks[0]["name"], blocks[0]["input"] or {}, db_path=db_path)]
+
+    # Bounded so a wide fan-out of model-backed tools doesn't open an
+    # unbounded number of concurrent upstream requests.
+    workers = min(len(blocks), MAX_PARALLEL_TOOLS)
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = [
+            pool.submit(dispatch, block["name"], block["input"] or {}, db_path=db_path)
+            for block in blocks
+        ]
+        # dispatch() already converts a tool failure into {"error": ...}, so a
+        # raise here would be a bug in dispatch itself rather than a tool --
+        # still caught, because one of them must not lose the whole turn.
+        results = []
+        for future in futures:
+            try:
+                results.append(future.result())
+            except Exception as exc:  # noqa: BLE001
+                results.append({"error": "{0}: {1}".format(type(exc).__name__, exc)})
+    return results
 
 
 def run(
     messages: List[Dict[str, Any]],
     *,
-    max_turns: int = 8,
+    max_turns: int = 12,
     db_path: Optional[Any] = None,
     client: Optional[Any] = None,
 ) -> Iterator[Event]:
@@ -103,10 +147,19 @@ def run(
     for _turn in range(max_turns):
         response = client.messages.create(
             model=model,
-            max_tokens=1536,
+            # Thinking is on by default on the current models and its
+            # tokens count against this budget, so a multi-tool turn needs
+            # real headroom — at 1536 a turn can spend the whole budget
+            # reasoning and come back truncated.
+            max_tokens=8192,
             system=SYSTEM_PROMPT,
             messages=conversation,
             tools=TOOL_SPECS,
+            # Every turn re-sends the whole conversation, so by the last turn
+            # the tool specs, system prompt, and every prior tool result are
+            # being re-read from scratch. Caching the prefix means each turn
+            # only pays full price for what that turn added.
+            cache_control={"type": "ephemeral"},
         )
 
         assistant_blocks = [_block_to_dict(b) for b in response.content]
@@ -128,10 +181,23 @@ def run(
             # as done rather than looping forever on nothing to dispatch.
             break
 
-        tool_result_content = []
+        # The model asks for several tools in one turn on purpose; running
+        # them one after another made the turn cost the SUM of their
+        # latencies. That is the dominant cost whenever a batch lands on a
+        # tool that itself calls a model (summarize_selection), where each
+        # call is seconds rather than milliseconds. Every tool is a
+        # read-only query and models.db.connect hands out a fresh
+        # connection per call, so they are safe to run at once.
         for block in tool_use_blocks:
             yield Event(type="tool_start", tool=block["name"], tool_input=block["input"])
-            result = dispatch(block["name"], block["input"] or {}, db_path=db_path)
+
+        results = _dispatch_all(tool_use_blocks, dispatch, db_path)
+
+        tool_result_content = []
+        # Reported and appended in the model's original block order, so a
+        # turn's transcript does not depend on which tool happened to
+        # finish first.
+        for block, result in zip(tool_use_blocks, results):
             yield Event(type="tool_end", tool=block["name"], tool_result=result)
             tool_result_content.append(
                 {
@@ -145,6 +211,25 @@ def run(
         conversation.append(tool_result_message)
         new_messages.append(tool_result_message)
     else:
-        log.info("agent.loop.run hit max_turns=%s without a final answer", max_turns)
+        # The turn budget ran out mid-tool-use, so the model never got a turn
+        # to write its answer and the caller would otherwise get silence after
+        # a dozen tool calls. One more call with tool_choice "none" forces it
+        # to answer from what it already gathered instead of asking for more.
+        log.info("agent.loop.run hit max_turns=%s; forcing a final answer", max_turns)
+        response = client.messages.create(
+            model=model,
+            max_tokens=1536,
+            system=SYSTEM_PROMPT,
+            messages=conversation,
+            tools=TOOL_SPECS,
+            tool_choice={"type": "none"},
+            cache_control={"type": "ephemeral"},
+        )
+        assistant_blocks = [_block_to_dict(b) for b in response.content]
+        assistant_message = {"role": "assistant", "content": assistant_blocks}
+        new_messages.append(assistant_message)
+        for block in assistant_blocks:
+            if block["type"] == "text" and block["text"]:
+                yield Event(type="text_delta", text=block["text"])
 
     yield Event(type="done", new_messages=new_messages)

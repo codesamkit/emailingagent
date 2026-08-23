@@ -123,21 +123,44 @@ class TestMaxTurns:
     def test_stops_at_max_turns_even_if_still_asking_for_tools(self, monkeypatch):
         monkeypatch.setattr(tools_module, "dispatch", lambda name, args, **kw: {})
         # Every response asks for another tool call -- an infinite loop
-        # without the max_turns cap.
-        client = _scripted_client([
-            _tool_use_response("list_queue", {}, tool_use_id="tu{0}".format(i))
-            for i in range(10)
-        ])
+        # without the max_turns cap. The last entry answers the forced
+        # final call the loop makes once the budget is spent.
+        client = _scripted_client(
+            [
+                _tool_use_response("list_queue", {}, tool_use_id="tu{0}".format(i))
+                for i in range(10)
+            ]
+            + [_text_response("Here is what I found.")]
+        )
         events = list(
             loop.run([{"role": "user", "content": "loop forever"}], client=client, max_turns=2)
         )
-        assert len(client.calls) == 2
+        # 2 tool-use turns + 1 forced synthesis turn.
+        assert len(client.calls) == 3
         assert events[-1].type == "done"
 
-    def test_default_max_turns_is_eight(self):
+    def test_exhausting_the_budget_still_produces_an_answer(self, monkeypatch):
+        """Running out of turns mid-tool-use used to yield no assistant text at
+        all -- the caller saw a silent `done` after N tool calls."""
+        monkeypatch.setattr(tools_module, "dispatch", lambda name, args, **kw: {})
+        client = _scripted_client(
+            [_tool_use_response("list_queue", {}), _text_response("Partial answer.")]
+        )
+        events = list(
+            loop.run([{"role": "user", "content": "go"}], client=client, max_turns=1)
+        )
+
+        assert [e.text for e in events if e.type == "text_delta"] == ["Partial answer."]
+        # The forced call must leave the model no way to ask for more tools.
+        assert client.calls[-1]["tool_choice"] == {"type": "none"}
+        # ...and it is persisted like any other turn, so the next message in
+        # the conversation continues from it.
+        assert events[-1].new_messages[-1]["role"] == "assistant"
+
+    def test_default_max_turns_is_twelve(self):
         import inspect
 
-        assert inspect.signature(loop.run).parameters["max_turns"].default == 8
+        assert inspect.signature(loop.run).parameters["max_turns"].default == 12
 
 
 class TestOllamaGuard:

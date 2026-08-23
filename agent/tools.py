@@ -3,16 +3,13 @@
 Nine tools, each reusing an existing implementation rather than
 reimplementing it:
 
-  search_context        -> agent/fixtures.py's demo_context_pack (STUB —
-                            swap to retrieval.pack.build_pack once Track B
-                            exists; one line, marked below)
+  search_context        -> retrieval.pack.build_pack (real)
   get_email              -> pipeline.persist.get + ingestion.store.get (real)
-  get_thread_brief       -> agent/fixtures.py's demo_thread_brief (STUB —
-                            swap to retrieval.briefs.get_brief)
-  get_entity_brief       -> agent/fixtures.py's demo_entity_brief (STUB)
-  list_entities           -> agent/fixtures.py's demo_entities (STUB —
-                            swap to context.store.* once Track A exists)
-  find_open_items        -> agent/fixtures.py's demo_open_items (STUB)
+  get_thread_brief       -> retrieval.briefs.get_brief (real)
+  get_entity_brief       -> retrieval.briefs.get_brief, keyed by the entity's
+                            own kind (real)
+  list_entities           -> context.store.all_entities (real)
+  find_open_items        -> node_brief.open_items (real)
   list_queue              -> api.filters.apply_filters/sort_emails (real)
   draft_reply             -> drafting.expand.expand_outline_to_full_draft (real)
   summarize_selection     -> pipeline.persist.get for each id + one LLM call
@@ -28,7 +25,7 @@ posture as pipeline/orchestrate.py's _run_stage.
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 from models.schema import EntityKind
 
@@ -221,12 +218,16 @@ TOOL_SPECS: List[Dict[str, Any]] = [
 
 # --- serialization of context-graph fixture/real objects ---------------------
 
-def _entity_to_dict(entity: Any) -> Dict[str, Any]:
+def _entity_to_dict(entity: Any, aliases: Optional[Sequence[str]] = None) -> Dict[str, Any]:
+    # context.store.all_entities builds Entity from the `entity` row alone, so
+    # `.aliases` is always empty there — aliases live in their own table. They
+    # are passed in rather than read off the entity so the caller can fetch the
+    # whole alias map in one query instead of one per entity.
     return {
         "entity_id": entity.entity_id,
         "kind": entity.kind.value if hasattr(entity.kind, "value") else entity.kind,
         "canonical_name": entity.canonical_name,
-        "aliases": entity.aliases,
+        "aliases": list(aliases or entity.aliases or []),
         "mention_count": entity.mention_count,
         "salience": entity.salience,
     }
@@ -263,13 +264,13 @@ def _context_pack_to_dict(pack: Any, k: int) -> Dict[str, Any]:
 # --- individual tools ---------------------------------------------------------
 
 def _search_context(args: Dict[str, Any], db_path: Optional[Any]) -> Dict[str, Any]:
-    from agent.fixtures import demo_context_pack
+    from retrieval.pack import build_pack
 
     query = args["query"]
     k = int(args.get("k") or 8)
-    # One-line swap once Track B exists:
-    # pack = build_pack(anchor_email_id=args.get("anchor_email_id"), query=query, db_path=db_path)
-    pack = demo_context_pack(query=query, anchor_email_id=args.get("anchor_email_id"))
+    pack = build_pack(
+        anchor_email_id=args.get("anchor_email_id"), query=query, db_path=db_path
+    )
     return _context_pack_to_dict(pack, k)
 
 
@@ -291,44 +292,152 @@ def _get_email(args: Dict[str, Any], db_path: Optional[Any]) -> Dict[str, Any]:
 
 
 def _get_thread_brief(args: Dict[str, Any], db_path: Optional[Any]) -> Dict[str, Any]:
-    from agent.fixtures import demo_thread_brief
+    from retrieval.briefs import get_brief
 
     thread_id = args["thread_id"]
-    # One-line swap once Track B exists:
-    # brief = get_brief("thread", thread_id, db_path=db_path)
-    brief = demo_thread_brief(thread_id)
+    brief = get_brief("thread", thread_id, db_path=db_path)
     if brief is None:
         return {"error": "No brief for thread {0!r}".format(thread_id)}
     return _brief_to_dict(brief)
 
 
 def _get_entity_brief(args: Dict[str, Any], db_path: Optional[Any]) -> Dict[str, Any]:
-    from agent.fixtures import demo_entity_brief
+    """Briefs are keyed (node_type, node_id), so the entity's own kind is
+    what selects the row — reading it from the entity table first, rather
+    than guessing "case" then "project", is what makes person/topic/
+    deliverable briefs reachable too."""
+    from retrieval.briefs import get_brief
 
     entity_id = args["entity_id"]
-    # One-line swap once Track B exists:
-    # brief = get_brief("case", entity_id, db_path=db_path) or get_brief("project", entity_id, db_path=db_path)
-    brief = demo_entity_brief(entity_id)
+    entity = _entity_by_id(entity_id, db_path)
+    if entity is None:
+        return {"error": "No entity {0!r}".format(entity_id)}
+
+    kind = entity.kind.value if hasattr(entity.kind, "value") else str(entity.kind)
+    brief = get_brief(kind, entity_id, db_path=db_path)
     if brief is None:
-        return {"error": "No brief for entity {0!r}".format(entity_id)}
+        return {
+            "error": "No brief for entity {0!r} ({1})".format(
+                entity.canonical_name, kind
+            )
+        }
     return _brief_to_dict(brief)
 
 
 def _list_entities(args: Dict[str, Any], db_path: Optional[Any]) -> Dict[str, Any]:
-    from agent.fixtures import demo_entities
+    from context import store as context_store
 
     kind = EntityKind(args["kind"]) if args.get("kind") else None
-    # One-line swap once Track A exists: entities = context.store.list_entities(...)
-    entities = demo_entities(kind=kind, query=args.get("query"))
-    return {"entities": [_entity_to_dict(e) for e in entities[:MAX_LIST_ITEMS]]}
+    entities = context_store.all_entities(kind=kind, db_path=db_path)
+    aliases = _alias_map(db_path)
+    # all_entities has no text filter of its own; matching here keeps the
+    # name/alias search the tool advertises without a second query shape.
+    entities = _match_entities(entities, args.get("query"), aliases)
+
+    # The list is capped, but the model needs to know it is looking at the
+    # most salient N of a larger set — otherwise "list all projects" reads
+    # as complete when it is the top 25 of 61.
+    return {
+        "entities": [
+            _entity_to_dict(e, aliases.get(e.entity_id))
+            for e in entities[:MAX_LIST_ITEMS]
+        ],
+        "total_matching": len(entities),
+        "truncated": len(entities) > MAX_LIST_ITEMS,
+    }
 
 
 def _find_open_items(args: Dict[str, Any], db_path: Optional[Any]) -> Dict[str, Any]:
-    from agent.fixtures import demo_open_items
+    """Open items live in node_brief.open_items (a JSON array per brief), so
+    this reads them straight out of the brief table rather than re-deriving
+    them. A person/case argument narrows it to that entity's own brief."""
+    from models import db as models_db
 
-    # One-line swap once Track A/B exist: items = query the node_brief table directly
-    items = demo_open_items(person=args.get("person"), case=args.get("case"))
-    return {"items": items[:MAX_LIST_ITEMS]}
+    target = args.get("person") or args.get("case")
+    sql = "SELECT node_type, node_id, headline, open_items FROM node_brief"
+    params: List[Any] = []
+
+    if target:
+        entity = _entity_by_name(target, db_path)
+        if entity is None:
+            return {"error": "No entity matching {0!r}".format(target)}
+        sql += " WHERE node_id = ?"
+        params.append(entity.entity_id)
+
+    items: List[Dict[str, Any]] = []
+    with models_db.connect(db_path) as conn:
+        for row in conn.execute(sql, params):
+            node_type, node_id, headline, open_items = row[0], row[1], row[2], row[3]
+            for text in json.loads(open_items or "[]"):
+                items.append(
+                    {
+                        "item": _truncate(text),
+                        "node_type": node_type,
+                        "node_id": node_id,
+                        "headline": headline,
+                    }
+                )
+                if len(items) >= MAX_LIST_ITEMS:
+                    return {"items": items, "truncated": True}
+
+    return {"items": items, "truncated": False}
+
+
+# --- entity lookup shared by the brief/open-item tools ------------------------
+
+def _entity_by_id(entity_id: str, db_path: Optional[Any]) -> Optional[Any]:
+    from context import store as context_store
+
+    for entity in context_store.all_entities(db_path=db_path):
+        if entity.entity_id == entity_id:
+            return entity
+    return None
+
+
+def _entity_by_name(name: str, db_path: Optional[Any]) -> Optional[Any]:
+    """Most salient entity whose name or alias matches — the model passes a
+    human name ("Priya", "Henderson"), not an entity_id."""
+    from context import store as context_store
+
+    matches = _match_entities(
+        context_store.all_entities(db_path=db_path), name, _alias_map(db_path)
+    )
+    return matches[0] if matches else None
+
+
+def _alias_map(db_path: Optional[Any]) -> Dict[str, List[str]]:
+    """{entity_id: [alias, ...]} in one read."""
+    from models import db as models_db
+
+    out: Dict[str, List[str]] = {}
+    with models_db.connect(db_path) as conn:
+        for row in conn.execute("SELECT entity_id, alias FROM entity_alias"):
+            out.setdefault(row[0], []).append(row[1])
+    return out
+
+
+def _match_entities(
+    entities: Sequence[Any],
+    query: Optional[str],
+    aliases: Optional[Dict[str, List[str]]] = None,
+) -> List[Any]:
+    """Case-insensitive substring match over canonical name and aliases.
+    all_entities already returns salience-ordered rows, so the filter
+    preserves that ranking."""
+    if not query:
+        return list(entities)
+    needle = query.strip().lower()
+    if not needle:
+        return list(entities)
+    aliases = aliases or {}
+
+    def matches(entity: Any) -> bool:
+        if needle in (entity.canonical_name or "").lower():
+            return True
+        known = aliases.get(entity.entity_id) or entity.aliases or []
+        return any(needle in (alias or "").lower() for alias in known)
+
+    return [e for e in entities if matches(e)]
 
 
 def _queue_item(email: Any) -> Dict[str, Any]:
@@ -442,10 +551,18 @@ def _summarize_selection(args: Dict[str, Any], db_path: Optional[Any]) -> Dict[s
     client = get_client("agent")
     response = client.messages.create(
         model=model_for("agent"),
-        max_tokens=512,
+        # Thinking tokens come out of this budget; 512 left almost nothing for
+        # the summary itself once the model reasoned about the batch.
+        max_tokens=1024,
         system=_SUMMARIZE_SELECTION_SYSTEM_PROMPT,
         messages=[{"role": "user", "content": user_message}],
-        output_config={"format": {"type": "json_schema", "schema": _SUMMARIZE_SELECTION_SCHEMA}},
+        output_config={
+            "format": {"type": "json_schema", "schema": _SUMMARIZE_SELECTION_SCHEMA},
+            # Condensing already-written per-email summaries is mechanical, and
+            # this runs as a nested call inside an agent turn -- the deep
+            # reasoning that suits the outer loop is pure latency here.
+            "effort": "low",
+        },
     )
     text = next(block.text for block in response.content if block.type == "text")
     data = json.loads(text)

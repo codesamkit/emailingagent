@@ -1,0 +1,724 @@
+<title>Valence Node Sheet</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500&display=swap">
+<style>
+:root{
+  --ground:#E7EBF0; --panel:#F7F9FB; --panel-2:#DDE4EB;
+  --ink:#0B1218; --ink-2:#404E5A; --ink-3:#6D7C8A;
+  --rule:#C2CBD6; --rule-2:#A9B5C3;
+  --det:#0A6B79; --gen:#AE3560; --vec:#63499E; --io:#8F5A0E;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --ground:#070B0F; --panel:#0E141B; --panel-2:#141C24;
+    --ink:#DAE3EC; --ink-2:#9AAAB9; --ink-3:#6C7C8B;
+    --rule:#1B2530; --rule-2:#2B3945;
+    --det:#3EBCCD; --gen:#F26B92; --vec:#A98CF5; --io:#DFA243;
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#070B0F; --panel:#0E141B; --panel-2:#141C24;
+  --ink:#DAE3EC; --ink-2:#9AAAB9; --ink-3:#6C7C8B;
+  --rule:#1B2530; --rule-2:#2B3945;
+  --det:#3EBCCD; --gen:#F26B92; --vec:#A98CF5; --io:#DFA243;
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--ground); color:var(--ink);
+  font-family:"IBM Plex Sans",system-ui,sans-serif;
+  -webkit-font-smoothing:antialiased;
+}
+.sheet{max-width:1500px; margin:0 auto; padding:clamp(20px,4vw,56px) clamp(14px,3vw,40px) 80px;}
+
+/* ---- title block ---- */
+header{
+  border-top:2px solid var(--ink); border-bottom:1px solid var(--rule);
+  padding:22px 0 20px; display:flex; flex-wrap:wrap; gap:32px; align-items:flex-end;
+  justify-content:space-between;
+}
+h1{
+  font-family:Archivo,system-ui,sans-serif; font-weight:700;
+  font-size:clamp(30px,5.4vw,62px); line-height:.94; letter-spacing:-.028em;
+  margin:0; text-wrap:balance; max-width:15ch;
+}
+h1 em{font-style:normal; color:var(--ink-3);}
+.blurb{
+  font-size:14.5px; line-height:1.55; color:var(--ink-2); max-width:52ch; margin:0;
+}
+.stamp{
+  font-family:"IBM Plex Mono",monospace; font-size:10.5px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--ink-3);
+}
+
+/* ---- telemetry strip ---- */
+.tele{
+  display:grid; grid-template-columns:repeat(auto-fit,minmax(128px,1fr));
+  border:1px solid var(--rule); border-top:none;
+}
+.tele div{padding:14px 16px; border-right:1px solid var(--rule);}
+.tele div:last-child{border-right:none}
+.tele b{
+  display:block; font-family:Archivo,sans-serif; font-weight:600;
+  font-size:26px; letter-spacing:-.02em; font-variant-numeric:tabular-nums;
+}
+.tele span{
+  font-family:"IBM Plex Mono",monospace; font-size:9.5px; letter-spacing:.11em;
+  text-transform:uppercase; color:var(--ink-3);
+}
+
+/* ---- sections ---- */
+section{margin-top:64px}
+.shead{display:flex; align-items:baseline; gap:14px; flex-wrap:wrap; margin-bottom:6px}
+.shead h2{
+  font-family:Archivo,sans-serif; font-weight:600; font-size:20px;
+  letter-spacing:-.01em; margin:0;
+}
+.shead .kicker{
+  font-family:"IBM Plex Mono",monospace; font-size:10px; letter-spacing:.14em;
+  text-transform:uppercase; color:var(--gen);
+}
+.lede{font-size:14.5px; line-height:1.6; color:var(--ink-2); max-width:72ch; margin:0 0 22px}
+.lede code{font-family:"IBM Plex Mono",monospace; font-size:12.5px; color:var(--ink)}
+
+/* ---- figures ---- */
+figure{margin:0}
+.scroll{overflow-x:auto; border:1px solid var(--rule); background:var(--ground); padding:8px}
+svg.dg{display:block; min-width:1000px; width:100%; height:auto; color:var(--ink)}
+svg.dg.wide{min-width:1440px}
+svg.dg .nl{font-family:"IBM Plex Mono",monospace; font-size:11.5px; font-weight:600; fill:var(--ink)}
+svg.dg .nd{font-family:"IBM Plex Mono",monospace; font-size:9.2px; fill:var(--ink-3)}
+svg.dg .cl{font-family:"IBM Plex Mono",monospace; font-size:10.5px; font-weight:600; fill:var(--ink)}
+svg.dg .cd{font-family:"IBM Plex Mono",monospace; font-size:8.8px; fill:var(--ink-3)}
+svg.dg .al{font-family:"IBM Plex Mono",monospace; font-size:9px; fill:var(--ink-3)}
+svg.dg .rot{font-family:"IBM Plex Mono",monospace; font-size:9.5px; font-weight:600; fill:var(--gen)}
+svg.dg .eyb{font-family:Archivo,sans-serif; font-size:11px; font-weight:600;
+  letter-spacing:.16em; fill:var(--ink)}
+svg.dg .eyn{font-family:"IBM Plex Mono",monospace; font-size:11px; font-weight:600; fill:var(--gen)}
+svg.dg .eyd{font-family:"IBM Plex Mono",monospace; font-size:9.5px; fill:var(--ink-3)}
+svg.dg .bar{font-family:"IBM Plex Mono",monospace; font-size:10.5px; font-weight:600;
+  letter-spacing:.02em; fill:var(--gen)}
+figcaption{
+  font-size:13px; line-height:1.6; color:var(--ink-2); margin-top:12px;
+  max-width:82ch; padding-left:2px;
+}
+
+/* ---- legend ---- */
+.legend{
+  display:grid; grid-template-columns:repeat(auto-fit,minmax(206px,1fr)); gap:0;
+  border:1px solid var(--rule); margin-bottom:18px;
+}
+.legend > div{
+  padding:13px 15px; border-right:1px solid var(--rule);
+  display:flex; gap:11px; align-items:stretch;
+}
+.legend > div:last-child{border-right:none}
+.swatch{width:3px; align-self:stretch; min-height:32px; flex:0 0 3px; border-radius:1px}
+.swatch.dashed{width:0; border-left:3px dashed var(--rule-2)}
+.legend b{
+  font-family:"IBM Plex Mono",monospace; font-size:11px; font-weight:600; display:block;
+}
+.legend span{font-size:11.5px; color:var(--ink-3); line-height:1.45; display:block; margin-top:2px}
+
+/* ---- table ---- */
+.tw{overflow-x:auto; border:1px solid var(--rule)}
+table{border-collapse:collapse; width:100%; min-width:820px}
+thead th{
+  text-align:left; font-family:"IBM Plex Mono",monospace; font-size:9.5px;
+  letter-spacing:.13em; text-transform:uppercase; color:var(--ink-3);
+  padding:11px 14px; border-bottom:1px solid var(--rule-2); font-weight:500;
+  background:var(--panel);
+}
+tbody td{padding:9px 14px; border-bottom:1px solid var(--rule); vertical-align:top}
+tbody tr:last-child td{border-bottom:none}
+tbody tr:nth-child(odd){background:var(--panel)}
+td.bn{font-family:"IBM Plex Mono",monospace; font-size:10px; color:var(--gen); font-weight:600}
+td.nn{font-family:"IBM Plex Mono",monospace; font-size:11.5px; font-weight:600; white-space:nowrap}
+td.mm{font-family:"IBM Plex Mono",monospace; font-size:10.5px; color:var(--ink-3); white-space:nowrap}
+td.note{font-size:12.5px; color:var(--ink-2); line-height:1.45}
+.tag{
+  font-family:"IBM Plex Mono",monospace; font-size:9.5px; letter-spacing:.04em;
+  display:inline-block; padding:3px 7px 4px; line-height:1; border:1px solid;
+  border-radius:1px; white-space:nowrap;
+}
+.t-det{color:var(--det); border-color:var(--det)}
+.t-gen{color:var(--gen); border-color:var(--gen)}
+.t-vec{color:var(--vec); border-color:var(--vec)}
+.t-io{color:var(--io); border-color:var(--io)}
+
+/* ---- callouts ---- */
+.notes{display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:0;
+  border:1px solid var(--rule); border-bottom:none}
+.notes article{padding:18px 20px; border-bottom:1px solid var(--rule); border-right:1px solid var(--rule)}
+.notes article:last-child{border-right:none}
+.notes h3{
+  font-family:"IBM Plex Mono",monospace; font-size:11px; font-weight:600; margin:0 0 8px;
+  letter-spacing:.02em;
+}
+.notes p{margin:0; font-size:13px; line-height:1.6; color:var(--ink-2)}
+.notes .n-gen h3{color:var(--gen)}
+.notes .n-det h3{color:var(--det)}
+.notes .n-vec h3{color:var(--vec)}
+.notes .n-io h3{color:var(--io)}
+
+footer{
+  margin-top:72px; border-top:1px solid var(--rule); padding-top:16px;
+  display:flex; flex-wrap:wrap; gap:8px 28px; justify-content:space-between;
+  font-family:"IBM Plex Mono",monospace; font-size:10px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--ink-3);
+}
+</style>
+
+<div class="sheet">
+
+<header>
+  <div>
+    <div class="stamp">emailingagent &#183; main @ c895c8d &#183; sheet 1 of 1</div>
+    <h1>Valence<br>Node Sheet</h1>
+  </div>
+  <p class="blurb">Every node an email passes through, from the Gmail fetch to the
+  answer the agent hands back &#8212; drawn from the code, not from the plan. Colour is
+  cost: which nodes are pure code, which spend a model round trip, and which cross
+  the network.</p>
+</header>
+
+<div class="tele">
+  <div><b>36</b><span>nodes drawn</span></div>
+  <div><b>11</b><span>pipeline stages</span></div>
+  <div><b>15</b><span>storage tables</span></div>
+  <div><b>9</b><span>agent tools</span></div>
+  <div><b>15</b><span>api routes</span></div>
+  <div><b>7</b><span>llm calls / email</span></div>
+  <div><b>67</b><span>test modules</span></div>
+</div>
+
+<section>
+  <div class="shead">
+    <span class="kicker">Figure 1</span>
+    <h2>The whole signal path</h2>
+  </div>
+  <p class="lede">Read it top to bottom. The one heavy dashed line is the rule the
+  architecture is built around: the context pass has to finish for the entire corpus
+  before the reasoning pass touches a single email. Without it, email #1 would be
+  reasoned about against a graph that knows only email #1, while #160 would see
+  everything &#8212; the correlation the graph exists to provide would reach the last
+  message in a run and miss the first.</p>
+
+  <div class="legend">
+    <div><span class="swatch" style="background:var(--det)"></span><div><b>deterministic</b><span>Pure code. No model, no network. Free and repeatable.</span></div></div>
+    <div><span class="swatch" style="background:var(--gen)"></span><div><b>Anthropic call</b><span>One <code>messages.create</code> round trip. The expensive nodes.</span></div></div>
+    <div><span class="swatch" style="background:var(--vec)"></span><div><b>embedding call</b><span>Ollama <code>nomic-embed-text</code>. Cheap, local, high volume.</span></div></div>
+    <div><span class="swatch" style="background:var(--io)"></span><div><b>network I/O</b><span>Google APIs. Rate-limited, retried, and the only side effects.</span></div></div>
+    <div><span class="swatch dashed"></span><div><b>dashed outline</b><span>Wired to fixtures, not to the real thing. Not yet load-bearing.</span></div></div>
+  </div>
+
+  <figure>
+    <div class="scroll"><svg class="dg wide" viewBox="0 0 1560 1130" role="img" aria-label="Signal-flow schematic of every node in the Valence email pipeline: ingest, the corpus-wide context pass, the entity graph, the per-email reasoning pass, retrieval, the agent tool loop, and the surfaces.">
+<defs><marker id="ar-ink" viewBox="0 0 10 8" refX="9" refY="4" markerWidth="7" markerHeight="6" orient="auto-start-reverse"><polygon points="0,0 10,4 0,8" fill="currentColor" opacity=".55"/></marker><marker id="ar-det" viewBox="0 0 10 8" refX="9" refY="4" markerWidth="7" markerHeight="6" orient="auto-start-reverse"><polygon points="0,0 10,4 0,8" fill="var(--det)"/></marker><marker id="ar-gen" viewBox="0 0 10 8" refX="9" refY="4" markerWidth="7" markerHeight="6" orient="auto-start-reverse"><polygon points="0,0 10,4 0,8" fill="var(--gen)"/></marker><marker id="ar-vec" viewBox="0 0 10 8" refX="9" refY="4" markerWidth="7" markerHeight="6" orient="auto-start-reverse"><polygon points="0,0 10,4 0,8" fill="var(--vec)"/></marker><marker id="ar-io" viewBox="0 0 10 8" refX="9" refY="4" markerWidth="7" markerHeight="6" orient="auto-start-reverse"><polygon points="0,0 10,4 0,8" fill="var(--io)"/></marker></defs>
+<text class="eyn" x="56" y="30">00</text><text class="eyb" x="82" y="30">OUTSIDE THE PROCESS BOUNDARY</text>
+<rect class="nb" x="436.0" y="42" width="260.0" height="46" rx="1" fill="var(--panel)" stroke="var(--rule-2)"/>
+<rect x="436.0" y="42" width="3" height="46" rx="1" fill="var(--io)"/>
+<text class="nl" x="448.0" y="61">Gmail API v1</text>
+<text class="nd" x="448.0" y="73">users.messages / read-only scope</text>
+<rect class="nb" x="870.0" y="42" width="260.0" height="46" rx="1" fill="var(--panel)" stroke="var(--rule-2)"/>
+<rect x="870.0" y="42" width="3" height="46" rx="1" fill="var(--io)"/>
+<text class="nl" x="882.0" y="61">Google Calendar API v3</text>
+<text class="nd" x="882.0" y="73">freebusy / events insert, patch, delete</text>
+<text class="eyn" x="56" y="126">01</text><text class="eyb" x="82" y="126">INGEST</text>
+<rect class="nb" x="56.0" y="138" width="327.0" height="58" rx="1" fill="var(--panel)" stroke="var(--rule-2)"/>
+<rect x="56.0" y="138" width="3" height="58" rx="1" fill="var(--io)"/>
+<text class="nl" x="68.0" y="157">gmail_auth</text>
+<text class="nd" x="68.0" y="169">ingestion/gmail_auth.py</text>
+<text class="nd" x="68.0" y="180">OAuth &#183; token.json</text>
+<rect class="nb" x="403.0" y="138" width="327.0" height="58" rx="1" fill="var(--panel)" stroke="var(--rule-2)"/>
+<rect x="403.0" y="138" width="3" height="58" rx="1" fill="var(--io)"/>
+<text class="nl" x="415.0" y="157">fetch</text>
+<text class="nd" x="415.0" y="169">ingestion/fetch.py</text>
+<text class="nd" x="415.0" y="180">list_message_ids &#8594; get_message</text>
+<text class="nd" x="415.0" y="191">backoff.py &#183; 429 / 5xx retry</text>
+<rect class="nb" x="750.0" y="138" width="327.0" height="58" rx="1" fill="var(--panel)" stroke="var(--rule-2)"/>
+<rect x="750.0" y="138" width="3" height="58" rx="1" fill="var(--det)"/>
+<text class="nl" x="762.0" y="157">parse</text>
+<text class="nd" x="762.0" y="169">ingestion/parse.py</text>
+<text class="nd" x="762.0" y="180">MIME walk &#8594; text</text>
+<text class="nd" x="762.0" y="191">base64url &#183; HTML strip &#183; headers</text>
+<rect class="nb" x="1097.0" y="138" width="327.0" height="58" rx="1" fill="var(--panel)" stroke="var(--rule-2)"/>
+<rect x="1097.0" y="138" width="3" height="58" rx="1" fill="var(--det)"/>
+<text class="nl" x="1109.0" y="157">store.upsert</text>
+<text class="nd" x="1109.0" y="169">ingestion/store.py</text>
+<text class="nd" x="1109.0" y="180">&#8594; raw_email</text>
+<text class="nd" x="1109.0" y="191">idempotent on email_id</text>
+<path d="M385.0 167.0 L400.0 167.0" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".55" marker-end="url(#ar-ink)"/>
+<path d="M732.0 167.0 L747.0 167.0" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".55" marker-end="url(#ar-ink)"/>
+<path d="M1079.0 167.0 L1094.0 167.0" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".55" marker-end="url(#ar-ink)"/>
+<path d="M566.0 90.0 L566.0 135.0" fill="none" stroke="var(--io)" stroke-width="1.2" marker-end="url(#ar-io)"/>
+<text class="eyn" x="56" y="234">02</text><text class="eyb" x="82" y="234">CONTEXT PASS</text>
+<text class="eyd" x="212" y="234">whole corpus, before step 04 touches anything</text>
+<rect class="nb" x="56.0" y="246" width="257.6" height="58" rx="1" fill="var(--panel)" stroke="var(--rule-2)"/>
+<rect x="56.0" y="246" width="3" height="58" rx="1" fill="var(--det)"/>
+<text class="nl" x="68.0" y="265">chunk</text>
+<text class="nd" x="68.0" y="277">context/chunk.py</text>
+<text class="nd" x="68.0" y="288">body | quoted | signature</text>
+<text class="nd" x="68.0" y="299">800 chars &#183; 100 overlap</text>
+<rect class="nb" x="333.6" y="246" width="257.6" height="58" rx="1" fill="var(--panel)" stroke="var(--rule-2)"/>
+<rect x="333.6" y="246" width="3" height="58" rx="1" fill="var(--vec)"/>
+<text class="nl" x="345.6" y="265">embed</text>
+<text class="nd" x="345.6" y="277">context/embed.py</text>
+<text class="nd" x="345.6" y="288">nomic-embed-text</text>
+<text class="nd" x="345.6" y="299">BODY chunks only &#8594; f32 blob</text>
+<rect class="nb" x="611.2" y="246" width="257.6" height="58" rx="1" fill="var(--panel)" stroke="var(--rule-2)"/>
+<rect x="611.2" y="246" width="3" height="58" rx="1" fill="var(--gen)"/>
+<text class="nl" x="623.2" y="265">extract</text>
+<text class="nd" x="623.2" y="277">context/extract.py</text>
+<text class="nd" x="623.2" y="288">headers + regex, then LLM</text>
+<text class="nd" x="623.2" y="299">&#8594; Mention spans</text>
+<rect class="nb" x="888.8" y="246" width="257.6" height="58" rx="1" fill="var(--panel)" stroke="var(--rule-2)"/>
+<rect x="888.8" y="246" width="3" height="58" rx="1" fill="var(--vec)"/>
+<text class="nl" x="900.8" y="265">resolve</text>
+<text class="nd" x="900.8" y="277">context/resolve.py</text>
+<text class="nd" x="900.8" y="288">alias table, then cosine</text>
+<text class="nd" x="900.8" y="299">&#8594; canonical entity_id</text>
+<rect class="nb" x="1166.4" y="246" width="257.6" height="58" rx="1" fill="var(--panel)" stroke="var(--rule-2)"/>
+<rect x="1166.4" y="246" width="3" height="58" rx="1" fill="var(--det)"/>
+<text class="nl" x="1178.4" y="265">consolidate</text>
+<text class="nd" x="1178.4" y="277">context/consolidate.py</text>
+<text class="nd" x="1178.4" y="288">co-occurrence &#8594; Relation</text>
+<text class="nd" x="1178.4" y="299">salience &#183; mention_count</text>
+<path d="M315.6 275.0 L330.6 275.0" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".55" marker-end="url(#ar-ink)"/>
+<path d="M593.2 275.0 L608.2 275.0" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".55" marker-end="url(#ar-ink)"/>
+<path d="M870.8 275.0 L885.8 275.0" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".55" marker-end="url(#ar-ink)"/>
+<path d="M1148.4 275.0 L1163.4 275.0" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".55" marker-end="url(#ar-ink)"/>
+<path d="M1260.5 196.0 L1260.5 218.0 L184.8 218.0 L184.8 243.0" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".55" marker-end="url(#ar-ink)"/><text class="al" x="700.0" y="213.0" text-anchor="middle">raw_email</text>
+<text class="eyn" x="56" y="342">03</text><text class="eyb" x="82" y="342">THE CONTEXT GRAPH</text>
+<text class="eyd" x="238" y="342">sqlite / models/db.py</text>
+<rect x="56" y="354" width="1368" height="86" rx="1" fill="none" stroke="currentColor" stroke-width="1" opacity=".3" stroke-dasharray="2 3"/>
+<rect class="nb" x="70.0" y="370" width="140.0" height="52" rx="1" fill="var(--panel-2)" stroke="var(--rule-2)"/><line x1="70.0" y1="374" x2="210.0" y2="374" stroke="var(--rule-2)"/><text class="cl" x="140.0" y="394" text-anchor="middle">chunk</text><text class="cd" x="140.0" y="406" text-anchor="middle">text spans</text>
+<rect class="nb" x="220.0" y="370" width="140.0" height="52" rx="1" fill="var(--panel-2)" stroke="var(--rule-2)"/><line x1="220.0" y1="374" x2="360.0" y2="374" stroke="var(--rule-2)"/><text class="cl" x="290.0" y="394" text-anchor="middle">chunk_fts</text><text class="cd" x="290.0" y="406" text-anchor="middle">fts5 index</text>
+<rect class="nb" x="370.0" y="370" width="140.0" height="52" rx="1" fill="var(--panel-2)" stroke="var(--rule-2)"/><line x1="370.0" y1="374" x2="510.0" y2="374" stroke="var(--rule-2)"/><text class="cl" x="440.0" y="394" text-anchor="middle">chunk_vec</text><text class="cd" x="440.0" y="406" text-anchor="middle">f32 vectors</text>
+<rect class="nb" x="520.0" y="370" width="140.0" height="52" rx="1" fill="var(--panel-2)" stroke="var(--rule-2)"/><line x1="520.0" y1="374" x2="660.0" y2="374" stroke="var(--rule-2)"/><text class="cl" x="590.0" y="394" text-anchor="middle">entity</text><text class="cd" x="590.0" y="406" text-anchor="middle">7 kinds</text>
+<rect class="nb" x="670.0" y="370" width="140.0" height="52" rx="1" fill="var(--panel-2)" stroke="var(--rule-2)"/><line x1="670.0" y1="374" x2="810.0" y2="374" stroke="var(--rule-2)"/><text class="cl" x="740.0" y="394" text-anchor="middle">entity_alias</text><text class="cd" x="740.0" y="406" text-anchor="middle">normalized</text>
+<rect class="nb" x="820.0" y="370" width="140.0" height="52" rx="1" fill="var(--panel-2)" stroke="var(--rule-2)"/><line x1="820.0" y1="374" x2="960.0" y2="374" stroke="var(--rule-2)"/><text class="cl" x="890.0" y="394" text-anchor="middle">entity_vec</text><text class="cd" x="890.0" y="406" text-anchor="middle">for resolve</text>
+<rect class="nb" x="970.0" y="370" width="140.0" height="52" rx="1" fill="var(--panel-2)" stroke="var(--rule-2)"/><line x1="970.0" y1="374" x2="1110.0" y2="374" stroke="var(--rule-2)"/><text class="cl" x="1040.0" y="394" text-anchor="middle">mention</text><text class="cd" x="1040.0" y="406" text-anchor="middle">span &#8594; entity</text>
+<rect class="nb" x="1120.0" y="370" width="140.0" height="52" rx="1" fill="var(--panel-2)" stroke="var(--rule-2)"/><line x1="1120.0" y1="374" x2="1260.0" y2="374" stroke="var(--rule-2)"/><text class="cl" x="1190.0" y="394" text-anchor="middle">relation</text><text class="cd" x="1190.0" y="406" text-anchor="middle">4 kinds</text>
+<rect class="nb" x="1270.0" y="370" width="140.0" height="52" rx="1" fill="var(--panel-2)" stroke="var(--rule-2)"/><line x1="1270.0" y1="374" x2="1410.0" y2="374" stroke="var(--rule-2)"/><text class="cl" x="1340.0" y="394" text-anchor="middle">node_brief</text><text class="cd" x="1340.0" y="406" text-anchor="middle">rollup docs</text>
+<path d="M740.0 304.0 L740.0 351.0" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".55" marker-end="url(#ar-ink)"/><text class="al" x="746.0" y="331.0" text-anchor="start">writes</text>
+<line x1="42" y1="474" x2="1438" y2="474" stroke="var(--gen)" stroke-width="2.5" stroke-dasharray="14 7"/>
+<rect x="356" y="459" width="768" height="30" fill="var(--ground)"/>
+<text class="bar" x="740" y="479" text-anchor="middle">BARRIER &#8212; the context pass completes for every email before any reasoning stage runs on one</text>
+<text class="eyn" x="56" y="518">04</text><text class="eyb" x="82" y="518">REASONING PASS</text>
+<text class="eyd" x="236" y="518">per email / order is load-bearing / every stage independently skippable</text>
+<rect class="nb" x="56.0" y="530" width="153.5" height="62" rx="1" fill="var(--panel)" stroke="var(--rule-2)"/>
+<rect x="56.0" y="530" width="3" height="62" rx="1" fill="var(--det)"/>
+<text class="nl" x="68.0" y="549">classify</text>
+<text class="nd" x="68.0" y="561">classification/</text>
+<text class="nd" x="68.0" y="572">rules, then llm_fallback</text>
+<text class="nd" x="68.0" y="583">&#8594; is_no_reply</text>
+<rect class="nb" x="229.5" y="530" width="153.5" height="62" rx="1" fill="var(--panel)" stroke="var(--rule-2)"/>
+<rect x="229.5" y="530" width="3" height="62" rx="1" fill="var(--gen)"/>
+<text class="nl" x="241.5" y="549">score</text>
+<text class="nd" x="241.5" y="561">scoring/score.py</text>
+<text class="nd" x="241.5" y="572">level, then band weights</text>
+<text class="nd" x="241.5" y="583">&#8594; importance 0&#8211;1</text>
+<rect class="nb" x="403.0" y="530" width="153.5" height="62" rx="1" fill="var(--panel)" stroke="var(--rule-2)"/>
+<rect x="403.0" y="530" width="3" height="62" rx="1" fill="var(--gen)"/>
+<text class="nl" x="415.0" y="549">summarize</text>
+<text class="nd" x="415.0" y="561">summarization/</text>
+<text class="nd" x="415.0" y="572">&#8594; summary_md</text>
+<rect class="nb" x="576.5" y="530" width="153.5" height="62" rx="1" fill="var(--panel)" stroke="var(--rule-2)"/>
+<rect x="576.5" y="530" width="3" height="62" rx="1" fill="var(--gen)"/>
+<text class="nl" x="588.5" y="549">categorize</text>
+<text class="nd" x="588.5" y="561">classification/</text>
+<text class="nd" x="588.5" y="572">categorize.py &#8594; topic</text>
+<rect class="nb" x="750.0" y="530" width="153.5" height="62" rx="1" fill="var(--panel)" stroke="var(--rule-2)"/>
+<rect x="750.0" y="530" width="3" height="62" rx="1" fill="var(--det)"/>
+<text class="nl" x="762.0" y="549">scheduling</text>
+<text class="nd" x="762.0" y="561">calendaring/</text>
+<text class="nd" x="762.0" y="572">scheduling_intent.py</text>
+<text class="nd" x="762.0" y="583">GATE &#183; deterministic</text>
+<rect class="nb" x="923.5" y="530" width="153.5" height="62" rx="1" fill="var(--panel)" stroke="var(--rule-2)"/>
+<rect x="923.5" y="530" width="3" height="62" rx="1" fill="var(--io)"/>
+<text class="nl" x="935.5" y="549">calendar</text>
+<text class="nd" x="935.5" y="561">calendaring/context.py</text>
+<text class="nd" x="935.5" y="572">free/busy &#183; 7-day window</text>
+<rect class="nb" x="1097.0" y="530" width="153.5" height="62" rx="1" fill="var(--panel)" stroke="var(--rule-2)"/>
+<rect x="1097.0" y="530" width="3" height="62" rx="1" fill="var(--gen)"/>
+<text class="nl" x="1109.0" y="549">propose_event</text>
+<text class="nd" x="1109.0" y="561">calendaring/propose.py</text>
+<text class="nd" x="1109.0" y="572">&#8594; ProposedEvent</text>
+<text class="nd" x="1109.0" y="583">SUGGESTED &#183; awaits user</text>
+<rect class="nb" x="1270.5" y="530" width="153.5" height="62" rx="1" fill="var(--panel)" stroke="var(--rule-2)"/>
+<rect x="1270.5" y="530" width="3" height="62" rx="1" fill="var(--gen)"/>
+<text class="nl" x="1282.5" y="549">outline</text>
+<text class="nd" x="1282.5" y="561">drafting/outline.py</text>
+<text class="nd" x="1282.5" y="572">GATE: read, not no-reply</text>
+<text class="nd" x="1282.5" y="583">&#8594; reply outline</text>
+<path d="M211.5 561.0 L226.5 561.0" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".55" marker-end="url(#ar-ink)"/>
+<path d="M385.0 561.0 L400.0 561.0" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".55" marker-end="url(#ar-ink)"/>
+<path d="M558.5 561.0 L573.5 561.0" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".55" marker-end="url(#ar-ink)"/>
+<path d="M732.0 561.0 L747.0 561.0" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".55" marker-end="url(#ar-ink)"/>
+<path d="M905.5 561.0 L920.5 561.0" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".55" marker-end="url(#ar-ink)"/>
+<path d="M1079.0 561.0 L1094.0 561.0" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".55" marker-end="url(#ar-ink)"/>
+<path d="M1252.5 561.0 L1267.5 561.0" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".55" marker-end="url(#ar-ink)"/>
+<path d="M300.0 440.0 L300.0 500.0 L132.8 500.0 L132.8 527.0" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".55" marker-end="url(#ar-ink)"/><text class="al" x="306.0" y="496.0" text-anchor="start">then, per email</text>
+<path d="M1200.0 440.0 L1200.0 500.0 L1347.2 500.0 L1347.2 527.0" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".55" marker-end="url(#ar-ink)"/><text class="al" x="1206.0" y="462.0" text-anchor="start">reads retrieved context</text>
+<text class="al" x="909.5" y="526">only if scheduling</text>
+<path d="M1130.0 65.0 L1500.0 65.0 L1500.0 602.0 L1000.2 602.0 L1000.2 596.0" fill="none" stroke="var(--io)" stroke-width="1.2" marker-end="url(#ar-io)"/><text class="al" x="1492.0" y="320.0" text-anchor="end">free/busy, then insert on approve</text>
+<text class="eyn" x="56" y="640">05</text><text class="eyb" x="82" y="640">PERSISTED STATE</text>
+<rect x="56" y="652" width="1368" height="72" rx="1" fill="none" stroke="currentColor" stroke-width="1" opacity=".3" stroke-dasharray="2 3"/>
+<rect class="nb" x="70.0" y="664" width="324.5" height="48" rx="1" fill="var(--panel-2)" stroke="var(--rule-2)"/><line x1="70.0" y1="668" x2="394.5" y2="668" stroke="var(--rule-2)"/><text class="cl" x="232.2" y="688" text-anchor="middle">processed_email</text><text class="cd" x="232.2" y="700" text-anchor="middle">one row per email &#183; the queue</text>
+<rect class="nb" x="408.5" y="664" width="324.5" height="48" rx="1" fill="var(--panel-2)" stroke="var(--rule-2)"/><line x1="408.5" y1="668" x2="733.0" y2="668" stroke="var(--rule-2)"/><text class="cl" x="570.8" y="688" text-anchor="middle">feedback</text><text class="cd" x="570.8" y="700" text-anchor="middle">sender priors &#183; level, no_reply</text>
+<rect class="nb" x="747.0" y="664" width="324.5" height="48" rx="1" fill="var(--panel-2)" stroke="var(--rule-2)"/><line x1="747.0" y1="668" x2="1071.5" y2="668" stroke="var(--rule-2)"/><text class="cl" x="909.2" y="688" text-anchor="middle">agent_conversation</text><text class="cd" x="909.2" y="700" text-anchor="middle">chat threads</text>
+<rect class="nb" x="1085.5" y="664" width="324.5" height="48" rx="1" fill="var(--panel-2)" stroke="var(--rule-2)"/><line x1="1085.5" y1="668" x2="1410.0" y2="668" stroke="var(--rule-2)"/><text class="cl" x="1247.8" y="688" text-anchor="middle">agent_message</text><text class="cd" x="1247.8" y="700" text-anchor="middle">replayable turns, thinking included</text>
+<path d="M306.2 592.0 L306.2 649.0" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".55" marker-end="url(#ar-ink)"/><text class="al" x="312.2" y="624.0" text-anchor="start">one row per email</text>
+<text class="eyn" x="56" y="762">06</text><text class="eyb" x="82" y="762">RETRIEVAL</text>
+<text class="eyd" x="188" y="762">three channels, reciprocal-rank fused</text>
+<rect class="nb" x="56.0" y="774" width="211.3" height="58" rx="1" fill="var(--panel)" stroke="var(--rule-2)"/>
+<rect x="56.0" y="774" width="3" height="58" rx="1" fill="var(--det)"/>
+<text class="nl" x="68.0" y="793">_bm25</text>
+<text class="nd" x="68.0" y="805">retrieval/search.py</text>
+<text class="nd" x="68.0" y="816">chunk_fts &#183; keyword</text>
+<rect class="nb" x="287.3" y="774" width="211.3" height="58" rx="1" fill="var(--panel)" stroke="var(--rule-2)"/>
+<rect x="287.3" y="774" width="3" height="58" rx="1" fill="var(--vec)"/>
+<text class="nl" x="299.3" y="793">_vector</text>
+<text class="nd" x="299.3" y="805">retrieval/search.py</text>
+<text class="nd" x="299.3" y="816">chunk_vec &#183; cosine</text>
+<rect class="nb" x="518.7" y="774" width="211.3" height="58" rx="1" fill="var(--panel)" stroke="var(--rule-2)"/>
+<rect x="518.7" y="774" width="3" height="58" rx="1" fill="var(--det)"/>
+<text class="nl" x="530.7" y="793">_graph</text>
+<text class="nd" x="530.7" y="805">retrieval/search.py</text>
+<text class="nd" x="530.7" y="816">mention &#8904; relation</text>
+<rect class="nb" x="750.0" y="774" width="211.3" height="58" rx="1" fill="var(--panel)" stroke="var(--rule-2)"/>
+<rect x="750.0" y="774" width="3" height="58" rx="1" fill="var(--det)"/>
+<text class="nl" x="762.0" y="793">RRF fuse</text>
+<text class="nd" x="762.0" y="805">retrieval/search.py</text>
+<text class="nd" x="762.0" y="816">&#931; 1/(60 + rank)</text>
+<text class="nd" x="762.0" y="827">channel = a+b+c</text>
+<rect class="nb" x="981.3" y="774" width="211.3" height="58" rx="1" fill="var(--panel)" stroke="var(--rule-2)"/>
+<rect x="981.3" y="774" width="3" height="58" rx="1" fill="var(--det)"/>
+<text class="nl" x="993.3" y="793">pack</text>
+<text class="nd" x="993.3" y="805">retrieval/pack.py</text>
+<text class="nd" x="993.3" y="816">&#8594; ContextPack</text>
+<text class="nd" x="993.3" y="827">anchor + foreign sections</text>
+<rect class="nb" x="1212.7" y="774" width="211.3" height="58" rx="1" fill="var(--panel)" stroke="var(--rule-2)"/>
+<rect x="1212.7" y="774" width="3" height="58" rx="1" fill="var(--gen)"/>
+<text class="nl" x="1224.7" y="793">briefs</text>
+<text class="nd" x="1224.7" y="805">retrieval/briefs.py</text>
+<text class="nd" x="1224.7" y="816">rebuild_dirty &#183; evidence_hash</text>
+<text class="nd" x="1224.7" y="827">&#8594; node_brief</text>
+<path d="M732.0 803.0 L747.0 803.0" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".55" marker-end="url(#ar-ink)"/>
+<path d="M393.0 832.0 L393.0 846.0 L881.7 846.0 L881.7 835.0" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".55" marker-end="url(#ar-ink)"/>
+<path d="M161.7 832.0 L161.7 858.0 L829.7 858.0 L829.7 835.0" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".55" marker-end="url(#ar-ink)"/>
+<path d="M963.3 803.0 L978.3 803.0" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".55" marker-end="url(#ar-ink)"/>
+<path d="M56.0 400.0 L24.0 400.0 L24.0 750.0 L161.7 750.0 L161.7 771.0" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".55" marker-end="url(#ar-ink)"/>
+<path d="M1424.0 400.0 L1470.0 400.0 L1470.0 750.0 L1318.3 750.0 L1318.3 771.0" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".55" marker-end="url(#ar-ink)"/><text class="al" x="1466.0" y="620.0" text-anchor="end">node_brief</text>
+<text class="eyn" x="56" y="892">07</text><text class="eyb" x="82" y="892">AGENT</text>
+<text class="eyd" x="160" y="892">the only cycle in the system &#8212; see figure 2</text>
+<rect class="nb" x="56.0" y="904" width="300.0" height="62" rx="1" fill="var(--panel)" stroke="var(--rule-2)"/>
+<rect x="56.0" y="904" width="3" height="62" rx="1" fill="var(--det)"/>
+<text class="nl" x="68.0" y="923">conversation</text>
+<text class="nd" x="68.0" y="935">agent/conversation.py</text>
+<text class="nd" x="68.0" y="946">append / replay verbatim</text>
+<rect class="nb" x="396.0" y="904" width="300.0" height="62" rx="1" fill="var(--panel)" stroke="var(--rule-2)"/>
+<rect x="396.0" y="904" width="3" height="62" rx="1" fill="var(--gen)"/>
+<text class="nl" x="408.0" y="923">loop.run</text>
+<text class="nd" x="408.0" y="935">agent/loop.py</text>
+<text class="nd" x="408.0" y="946">messages.create(tools=...)</text>
+<text class="nd" x="408.0" y="957">8 turns max / 8192 max_tokens</text>
+<rect class="nb" x="756.0" y="904" width="300.0" height="62" rx="1" fill="var(--panel)" stroke="var(--rule-2)"/>
+<rect x="756.0" y="904" width="3" height="62" rx="1" fill="var(--det)"/>
+<text class="nl" x="768.0" y="923">tools.dispatch</text>
+<text class="nd" x="768.0" y="935">agent/tools.py</text>
+<text class="nd" x="768.0" y="946">9 specs / never raises</text>
+<text class="nd" x="768.0" y="957">failure becomes a tool_result</text>
+<rect class="nb" x="1096.0" y="904" width="328.0" height="62" rx="1" fill="none" stroke="var(--rule-2)" stroke-dasharray="4 3"/>
+<rect x="1096.0" y="904" width="3" height="62" rx="1" fill="var(--gen)"/>
+<text class="nl" x="1108.0" y="923">agent/fixtures.py</text>
+<text class="nd" x="1108.0" y="935">demo_context_pack / demo_thread_brief</text>
+<text class="nd" x="1108.0" y="946">demo_entities / demo_open_items</text>
+<path d="M358.0 925.0 L393.0 925.0" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".55" marker-end="url(#ar-ink)"/>
+<path d="M393.0 945.0 L358.0 945.0" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".55" marker-end="url(#ar-ink)"/>
+<path d="M698.0 925.0 L753.0 925.0" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".55" marker-end="url(#ar-ink)"/><text class="al" x="725.0" y="919.0" text-anchor="middle">tool_use</text>
+<path d="M753.0 950.0 L698.0 950.0" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".55" marker-end="url(#ar-ink)"/><text class="al" x="725.0" y="982.0" text-anchor="middle">tool_result</text>
+<path d="M1058.0 935.0 L1093.0 935.0" fill="none" stroke="var(--gen)" stroke-width="1.2" stroke-dasharray="4 4" marker-end="url(#ar-gen)"/>
+<path d="M1087.0 832.0 L1087.0 878.0 L906.0 878.0 L906.0 901.0" fill="none" stroke="var(--gen)" stroke-width="1.2" stroke-dasharray="4 4" marker-end="url(#ar-gen)"/><text class="al" x="1095.0" y="872.0" text-anchor="start">5 of the 9 tools do not take this edge yet</text>
+<text class="eyn" x="56" y="996">08</text><text class="eyb" x="82" y="996">SURFACES</text>
+<rect class="nb" x="56.0" y="1008" width="327.0" height="54" rx="1" fill="var(--panel)" stroke="var(--rule-2)"/>
+<rect x="56.0" y="1008" width="3" height="54" rx="1" fill="var(--det)"/>
+<text class="nl" x="68.0" y="1027">api/main.py</text>
+<text class="nd" x="68.0" y="1039">FastAPI &#183; 15 routes</text>
+<text class="nd" x="68.0" y="1050">bearer token &#183; SSE chat</text>
+<rect class="nb" x="403.0" y="1008" width="327.0" height="54" rx="1" fill="var(--panel)" stroke="var(--rule-2)"/>
+<rect x="403.0" y="1008" width="3" height="54" rx="1" fill="var(--det)"/>
+<text class="nl" x="415.0" y="1027">extension</text>
+<text class="nd" x="415.0" y="1039">MV3 &#183; content script</text>
+<text class="nd" x="415.0" y="1050">injects into Gmail</text>
+<rect class="nb" x="750.0" y="1008" width="327.0" height="54" rx="1" fill="var(--panel)" stroke="var(--rule-2)"/>
+<rect x="750.0" y="1008" width="3" height="54" rx="1" fill="var(--det)"/>
+<text class="nl" x="762.0" y="1027">valence-frontend</text>
+<text class="nd" x="762.0" y="1039">Vite + React + Tailwind</text>
+<rect class="nb" x="1097.0" y="1008" width="327.0" height="54" rx="1" fill="var(--panel)" stroke="var(--rule-2)"/>
+<rect x="1097.0" y="1008" width="3" height="54" rx="1" fill="var(--det)"/>
+<text class="nl" x="1109.0" y="1027">7 &#215; cli.py</text>
+<text class="nd" x="1109.0" y="1039">ingestion pipeline context</text>
+<text class="nd" x="1109.0" y="1050">retrieval llm calendaring review</text>
+<path d="M300.0 1006.0 L300.0 988.0 L546.0 988.0 L546.0 969.0" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".55" marker-end="url(#ar-ink)"/><text class="al" x="310.0" y="984.0" text-anchor="start">POST /api/agent/chat</text>
+<path d="M566.5 1062.0 L566.5 1086.0 L241.5 1086.0 L241.5 1065.0" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".55" marker-end="url(#ar-ink)"/>
+<path d="M913.5 1062.0 L913.5 1100.0 L197.5 1100.0 L197.5 1065.0" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".55" marker-end="url(#ar-ink)"/><text class="al" x="263.5" y="1082.0" text-anchor="start">bearer token</text>
+</svg></div>
+    <figcaption>Solid arrows are live edges in the code today. The dashed rose edge
+    into <code>tools.dispatch</code> is the one that is drawn but not taken: five of
+    the nine tools still resolve to <code>agent/fixtures.py</code>, so the retrieval
+    layer above them is finished and unreachable from the agent.</figcaption>
+  </figure>
+</section>
+
+<section>
+  <div class="shead">
+    <span class="kicker">Figure 2</span>
+    <h2>The only cycle, and what its tools really read</h2>
+  </div>
+  <p class="lede">Everything else in the system is a straight line. The agent is the
+  one place control loops: each turn either stops or dispatches tools and comes back.
+  The right-hand column is the honest accounting of where those tools get their
+  answers &#8212; and the five converging dashed arrows are the gap between the retrieval
+  layer that exists and the agent that cannot see it.</p>
+  <figure>
+    <div class="scroll"><svg class="dg" viewBox="0 0 1250 500" role="img" aria-label="The agent tool-use cycle and what each of its nine tools actually reads: four reach live storage, five still read demo fixtures.">
+<defs><marker id="ar-ink" viewBox="0 0 10 8" refX="9" refY="4" markerWidth="7" markerHeight="6" orient="auto-start-reverse"><polygon points="0,0 10,4 0,8" fill="currentColor" opacity=".55"/></marker><marker id="ar-det" viewBox="0 0 10 8" refX="9" refY="4" markerWidth="7" markerHeight="6" orient="auto-start-reverse"><polygon points="0,0 10,4 0,8" fill="var(--det)"/></marker><marker id="ar-gen" viewBox="0 0 10 8" refX="9" refY="4" markerWidth="7" markerHeight="6" orient="auto-start-reverse"><polygon points="0,0 10,4 0,8" fill="var(--gen)"/></marker><marker id="ar-vec" viewBox="0 0 10 8" refX="9" refY="4" markerWidth="7" markerHeight="6" orient="auto-start-reverse"><polygon points="0,0 10,4 0,8" fill="var(--vec)"/></marker><marker id="ar-io" viewBox="0 0 10 8" refX="9" refY="4" markerWidth="7" markerHeight="6" orient="auto-start-reverse"><polygon points="0,0 10,4 0,8" fill="var(--io)"/></marker></defs>
+<text class="eyn" x="20" y="26">A</text><text class="eyb" x="46" y="26">THE TURN CYCLE</text>
+<rect class="nb" x="20.0" y="44" width="400.0" height="52" rx="1" fill="var(--panel)" stroke="var(--rule-2)"/>
+<rect x="20.0" y="44" width="3" height="52" rx="1" fill="var(--det)"/>
+<text class="nl" x="32.0" y="63">user turn</text>
+<text class="nd" x="32.0" y="75">appended to agent_message</text>
+<rect class="nb" x="20.0" y="128" width="400.0" height="62" rx="1" fill="var(--panel)" stroke="var(--rule-2)"/>
+<rect x="20.0" y="128" width="3" height="62" rx="1" fill="var(--gen)"/>
+<text class="nl" x="32.0" y="147">messages.create</text>
+<text class="nd" x="32.0" y="159">system=SYSTEM_PROMPT</text>
+<text class="nd" x="32.0" y="170">tools=TOOL_SPECS / max_tokens=8192</text>
+<rect class="nb" x="20.0" y="236" width="400.0" height="52" rx="1" fill="var(--panel)" stroke="var(--rule-2)"/>
+<rect x="20.0" y="236" width="3" height="52" rx="1" fill="var(--det)"/>
+<text class="nl" x="32.0" y="255">stop_reason == tool_use ?</text>
+<text class="nd" x="32.0" y="267">no: break and yield done</text>
+<rect class="nb" x="20.0" y="330" width="400.0" height="52" rx="1" fill="var(--panel)" stroke="var(--rule-2)"/>
+<rect x="20.0" y="330" width="3" height="52" rx="1" fill="var(--det)"/>
+<text class="nl" x="32.0" y="349">dispatch(name, input)</text>
+<text class="nd" x="32.0" y="361">one call per tool_use block</text>
+<rect class="nb" x="20.0" y="424" width="400.0" height="52" rx="1" fill="var(--panel)" stroke="var(--rule-2)"/>
+<rect x="20.0" y="424" width="3" height="52" rx="1" fill="var(--det)"/>
+<text class="nl" x="32.0" y="443">tool_result blocks</text>
+<text class="nd" x="32.0" y="455">json.dumps into a user turn</text>
+<path d="M220.0 98.0 L220.0 125.0" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".55" marker-end="url(#ar-ink)"/>
+<path d="M220.0 192.0 L220.0 233.0" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".55" marker-end="url(#ar-ink)"/>
+<path d="M220.0 290.0 L220.0 327.0" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".55" marker-end="url(#ar-ink)"/>
+<path d="M220.0 384.0 L220.0 421.0" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".55" marker-end="url(#ar-ink)"/>
+<path d="M20.0 450.0 L8.0 450.0 L8.0 159.0 L17.0 159.0" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".55" marker-end="url(#ar-ink)"/><text class="al" x="14.0" y="306.0" text-anchor="start">8 turns max</text>
+<text class="al" x="228" y="222">thinking blocks replayed verbatim</text>
+<text class="eyn" x="520" y="26">B</text><text class="eyb" x="546" y="26">WHAT EACH TOOL READS</text>
+<text class="eyd" x="792" y="26">9 specs: 4 live, 5 stubbed</text>
+<rect class="nb" x="520.0" y="48" width="280.0" height="34" rx="1" fill="none" stroke="var(--rule-2)" stroke-dasharray="4 3"/>
+<rect x="520.0" y="48" width="3" height="34" rx="1" fill="var(--gen)"/>
+<text class="nl" x="532.0" y="67">search_context</text>
+<rect class="nb" x="520.0" y="92" width="280.0" height="34" rx="1" fill="none" stroke="var(--rule-2)" stroke-dasharray="4 3"/>
+<rect x="520.0" y="92" width="3" height="34" rx="1" fill="var(--gen)"/>
+<text class="nl" x="532.0" y="111">get_thread_brief</text>
+<rect class="nb" x="520.0" y="136" width="280.0" height="34" rx="1" fill="none" stroke="var(--rule-2)" stroke-dasharray="4 3"/>
+<rect x="520.0" y="136" width="3" height="34" rx="1" fill="var(--gen)"/>
+<text class="nl" x="532.0" y="155">get_entity_brief</text>
+<rect class="nb" x="520.0" y="180" width="280.0" height="34" rx="1" fill="none" stroke="var(--rule-2)" stroke-dasharray="4 3"/>
+<rect x="520.0" y="180" width="3" height="34" rx="1" fill="var(--gen)"/>
+<text class="nl" x="532.0" y="199">list_entities</text>
+<rect class="nb" x="520.0" y="224" width="280.0" height="34" rx="1" fill="none" stroke="var(--rule-2)" stroke-dasharray="4 3"/>
+<rect x="520.0" y="224" width="3" height="34" rx="1" fill="var(--gen)"/>
+<text class="nl" x="532.0" y="243">find_open_items</text>
+<rect class="nb" x="520.0" y="268" width="280.0" height="34" rx="1" fill="var(--panel)" stroke="var(--rule-2)"/>
+<rect x="520.0" y="268" width="3" height="34" rx="1" fill="var(--det)"/>
+<text class="nl" x="532.0" y="287">get_email</text>
+<rect class="nb" x="520.0" y="312" width="280.0" height="34" rx="1" fill="var(--panel)" stroke="var(--rule-2)"/>
+<rect x="520.0" y="312" width="3" height="34" rx="1" fill="var(--det)"/>
+<text class="nl" x="532.0" y="331">list_queue</text>
+<rect class="nb" x="520.0" y="356" width="280.0" height="34" rx="1" fill="var(--panel)" stroke="var(--rule-2)"/>
+<rect x="520.0" y="356" width="3" height="34" rx="1" fill="var(--det)"/>
+<text class="nl" x="532.0" y="375">draft_reply</text>
+<rect class="nb" x="520.0" y="400" width="280.0" height="34" rx="1" fill="var(--panel)" stroke="var(--rule-2)"/>
+<rect x="520.0" y="400" width="3" height="34" rx="1" fill="var(--det)"/>
+<text class="nl" x="532.0" y="419">summarize_selection</text>
+<line x1="506" y1="48" x2="506" y2="434" stroke="currentColor" opacity=".3"/>
+<path d="M422.0 356.0 L470.0 356.0 L470.0 241.0 L503.0 241.0" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".55" marker-end="url(#ar-ink)"/>
+<rect class="nb" x="990" y="48" width="248" height="210" rx="1" fill="none" stroke="var(--gen)" stroke-dasharray="4 3"/>
+<text class="nl" x="1002" y="76">agent/fixtures.py</text>
+<text class="nd" x="1002" y="96">demo_context_pack</text>
+<text class="nd" x="1002" y="111">demo_thread_brief</text>
+<text class="nd" x="1002" y="126">demo_entity_brief</text>
+<text class="nd" x="1002" y="141">demo_entities</text>
+<text class="nd" x="1002" y="156">demo_open_items</text>
+<text class="al" x="1002" y="192">demo data, not this mailbox</text>
+<path d="M802.0 65.0 L987.0 65.0" fill="none" stroke="var(--gen)" stroke-width="1" stroke-dasharray="4 4" marker-end="url(#ar-gen)"/>
+<path d="M802.0 109.0 L987.0 109.0" fill="none" stroke="var(--gen)" stroke-width="1" stroke-dasharray="4 4" marker-end="url(#ar-gen)"/>
+<path d="M802.0 153.0 L987.0 153.0" fill="none" stroke="var(--gen)" stroke-width="1" stroke-dasharray="4 4" marker-end="url(#ar-gen)"/>
+<path d="M802.0 197.0 L987.0 197.0" fill="none" stroke="var(--gen)" stroke-width="1" stroke-dasharray="4 4" marker-end="url(#ar-gen)"/>
+<path d="M802.0 241.0 L987.0 241.0" fill="none" stroke="var(--gen)" stroke-width="1" stroke-dasharray="4 4" marker-end="url(#ar-gen)"/>
+<path d="M802.0 285.0 L987.0 285.0" fill="none" stroke="var(--det)" stroke-width="1" marker-end="url(#ar-det)"/>
+<rect class="nb" x="990" y="268" width="248" height="34" rx="1" fill="var(--panel)" stroke="var(--rule-2)"/>
+<text class="nd" x="1002" y="289">raw_email &#8904; processed_email</text>
+<path d="M802.0 329.0 L987.0 329.0" fill="none" stroke="var(--det)" stroke-width="1" marker-end="url(#ar-det)"/>
+<rect class="nb" x="990" y="312" width="248" height="34" rx="1" fill="var(--panel)" stroke="var(--rule-2)"/>
+<text class="nd" x="1002" y="333">persist.all_processed + filters</text>
+<path d="M802.0 373.0 L987.0 373.0" fill="none" stroke="var(--det)" stroke-width="1" marker-end="url(#ar-det)"/>
+<rect class="nb" x="990" y="356" width="248" height="34" rx="1" fill="var(--panel)" stroke="var(--rule-2)"/>
+<text class="nd" x="1002" y="377">drafting/expand.py</text>
+<path d="M802.0 417.0 L987.0 417.0" fill="none" stroke="var(--det)" stroke-width="1" marker-end="url(#ar-det)"/>
+<rect class="nb" x="990" y="400" width="248" height="34" rx="1" fill="var(--panel)" stroke="var(--rule-2)"/>
+<text class="nd" x="1002" y="421">llm.client &#183; direct call</text>
+</svg></div>
+    <figcaption>Four tools read live storage. Five read <code>demo_*</code> fixtures,
+    which means the agent can answer confidently about entities and open items that
+    are not in this mailbox. Swapping each is a one-line change at the call site &#8212;
+    <code>build_pack</code> and <code>get_brief</code> already have the signatures.</figcaption>
+  </figure>
+</section>
+
+<section>
+  <div class="shead">
+    <span class="kicker">Figure 3</span>
+    <h2>What a node means in the graph itself</h2>
+  </div>
+  <p class="lede">The word does double duty in this repo. Above, a node is a
+  processing step. Here it is a thing in the mailbox: seven entity kinds, joined by
+  four typed relations, four of which are considered substantial enough to carry a
+  generated rollup brief.</p>
+  <figure>
+    <div class="scroll"><svg class="dg" viewBox="0 0 1250 420" role="img" aria-label="The seven entity kinds in the context graph, the four typed relations that connect them, and the four node types that carry a generated brief.">
+<defs><marker id="ar-ink" viewBox="0 0 10 8" refX="9" refY="4" markerWidth="7" markerHeight="6" orient="auto-start-reverse"><polygon points="0,0 10,4 0,8" fill="currentColor" opacity=".55"/></marker><marker id="ar-det" viewBox="0 0 10 8" refX="9" refY="4" markerWidth="7" markerHeight="6" orient="auto-start-reverse"><polygon points="0,0 10,4 0,8" fill="var(--det)"/></marker><marker id="ar-gen" viewBox="0 0 10 8" refX="9" refY="4" markerWidth="7" markerHeight="6" orient="auto-start-reverse"><polygon points="0,0 10,4 0,8" fill="var(--gen)"/></marker><marker id="ar-vec" viewBox="0 0 10 8" refX="9" refY="4" markerWidth="7" markerHeight="6" orient="auto-start-reverse"><polygon points="0,0 10,4 0,8" fill="var(--vec)"/></marker><marker id="ar-io" viewBox="0 0 10 8" refX="9" refY="4" markerWidth="7" markerHeight="6" orient="auto-start-reverse"><polygon points="0,0 10,4 0,8" fill="var(--io)"/></marker></defs>
+<path d="M622.0 130.0 L814.0 130.0" fill="none" stroke="var(--det)" stroke-width="1.2" marker-end="url(#ar-det)"/><text class="al" x="718.0" y="118.0" text-anchor="middle">belongs_to</text>
+<path d="M266.0 188.0 L494.0 142.0" fill="none" stroke="var(--det)" stroke-width="1.2" marker-end="url(#ar-det)"/><text class="al" x="380.0" y="152.0" text-anchor="middle">participant_in</text>
+<path d="M266.0 214.0 L494.0 288.0" fill="none" stroke="var(--det)" stroke-width="1.2" marker-end="url(#ar-det)"/><text class="al" x="372.0" y="268.0" text-anchor="middle">owner_of</text>
+<path d="M622.0 300.0 L814.0 300.0" fill="none" stroke="var(--det)" stroke-width="1.2" marker-end="url(#ar-det)"/><text class="al" x="718.0" y="288.0" text-anchor="middle">mentions</text>
+<path d="M200.0 82.0 L200.0 178.0" fill="none" stroke="var(--det)" stroke-width="1.2" stroke-dasharray="4 4" marker-end="url(#ar-det)"/>
+<path d="M200.0 222.0 L200.0 318.0" fill="none" stroke="var(--det)" stroke-width="1.2" stroke-dasharray="4 4" marker-end="url(#ar-det)"/>
+<text class="al" x="212" y="132">mentions</text>
+<text class="al" x="212" y="276">mentions</text>
+<rect x="138" y="40" width="124" height="40" rx="20" fill="var(--panel)" stroke="var(--rule-2)" stroke-width="1"/>
+<text class="cl" x="200" y="65" text-anchor="middle">org</text>
+<rect x="138" y="180" width="124" height="40" rx="20" fill="var(--panel)" stroke="var(--det)" stroke-width="2"/>
+<text class="cl" x="200" y="205" text-anchor="middle">person</text>
+<rect x="138" y="320" width="124" height="40" rx="20" fill="var(--panel)" stroke="var(--rule-2)" stroke-width="1"/>
+<text class="cl" x="200" y="345" text-anchor="middle">topic</text>
+<rect x="498" y="110" width="124" height="40" rx="20" fill="var(--panel)" stroke="var(--det)" stroke-width="2"/>
+<text class="cl" x="560" y="135" text-anchor="middle">case</text>
+<rect x="498" y="280" width="124" height="40" rx="20" fill="var(--panel)" stroke="var(--rule-2)" stroke-width="1"/>
+<text class="cl" x="560" y="305" text-anchor="middle">deliverable</text>
+<rect x="818" y="110" width="124" height="40" rx="20" fill="var(--panel)" stroke="var(--det)" stroke-width="2"/>
+<text class="cl" x="880" y="135" text-anchor="middle">project</text>
+<rect x="818" y="280" width="124" height="40" rx="20" fill="var(--panel)" stroke="var(--rule-2)" stroke-width="1"/>
+<text class="cl" x="880" y="305" text-anchor="middle">document</text>
+<rect x="1010" y="46" width="216" height="40" rx="20" fill="var(--panel)" stroke="var(--det)" stroke-width="2"/>
+<text class="cd" x="1118" y="71" text-anchor="middle">carries a node_brief</text>
+<text class="cd" x="1118" y="112" text-anchor="middle">thread / case / project / person</text>
+<text class="cd" x="1118" y="132" text-anchor="middle">rebuilt only when evidence_hash moves</text>
+<rect x="1010" y="216" width="216" height="40" rx="20" fill="var(--panel)" stroke="var(--rule-2)"/>
+<text class="cd" x="1118" y="241" text-anchor="middle">no brief of its own</text>
+<text class="cd" x="1118" y="282" text-anchor="middle">reachable through the ones that do</text>
+</svg></div>
+    <figcaption>Heavier outlines mark the node types that get a <code>node_brief</code> &#8212;
+    thread, case, project, person. A brief is regenerated only when its
+    <code>evidence_hash</code> changes, so a re-run over an unchanged mailbox costs
+    nothing. <code>mentions</code> is the symmetric catch-all: any two entities that
+    co-occur get it, which is what makes the graph dense enough for the
+    <code>_graph</code> retrieval channel to be worth having.</figcaption>
+  </figure>
+</section>
+
+<section>
+  <div class="shead">
+    <span class="kicker">Registry</span>
+    <h2>Every node, by band</h2>
+  </div>
+  <p class="lede">The full inventory behind the figures, with the module that owns
+  each one.</p>
+  <div class="tw">
+    <table>
+      <thead><tr><th>Band</th><th>Node</th><th>Module</th><th>Class</th><th>What it does</th></tr></thead>
+      <tbody><tr><td class="bn">01</td><td class="nn">gmail_auth</td><td class="mm">ingestion/gmail_auth.py</td><td><span class="tag t-io">network I/O</span></td><td class="note">OAuth flow, refreshes token.json</td></tr>
+<tr><td class="bn">01</td><td class="nn">fetch</td><td class="mm">ingestion/fetch.py</td><td><span class="tag t-io">network I/O</span></td><td class="note">Gmail list + get, retried through backoff.py</td></tr>
+<tr><td class="bn">01</td><td class="nn">parse</td><td class="mm">ingestion/parse.py</td><td><span class="tag t-det">deterministic</span></td><td class="note">MIME &#8594; RawEmail: headers, body, attachments</td></tr>
+<tr><td class="bn">01</td><td class="nn">store.upsert_emails</td><td class="mm">ingestion/store.py</td><td><span class="tag t-det">deterministic</span></td><td class="note">writes raw_email, idempotent</td></tr>
+<tr><td class="bn">02</td><td class="nn">chunk_email</td><td class="mm">context/chunk.py</td><td><span class="tag t-det">deterministic</span></td><td class="note">body / quoted / signature Chunks</td></tr>
+<tr><td class="bn">02</td><td class="nn">embed_chunks</td><td class="mm">context/embed.py</td><td><span class="tag t-vec">embedding call</span></td><td class="note">one Ollama batch &#8594; chunk_vec</td></tr>
+<tr><td class="bn">02</td><td class="nn">extract_entities</td><td class="mm">context/extract.py</td><td><span class="tag t-gen">Anthropic call</span></td><td class="note">deterministic pass, then one LLM pass</td></tr>
+<tr><td class="bn">02</td><td class="nn">resolve</td><td class="mm">context/resolve.py</td><td><span class="tag t-vec">embedding call</span></td><td class="note">alias match, then cosine against entity_vec</td></tr>
+<tr><td class="bn">02</td><td class="nn">consolidate</td><td class="mm">context/consolidate.py</td><td><span class="tag t-det">deterministic</span></td><td class="note">co-occurrence &#8594; relation, salience</td></tr>
+<tr><td class="bn">04</td><td class="nn">is_no_reply</td><td class="mm">classification/classify.py</td><td><span class="tag t-det">deterministic</span></td><td class="note">rules.py first; llm_fallback.py only on doubt</td></tr>
+<tr><td class="bn">04</td><td class="nn">score_importance</td><td class="mm">scoring/score.py</td><td><span class="tag t-gen">Anthropic call</span></td><td class="note">LLM picks the band, code places within it</td></tr>
+<tr><td class="bn">04</td><td class="nn">summarize</td><td class="mm">summarization/summarize.py</td><td><span class="tag t-gen">Anthropic call</span></td><td class="note">&#8594; summary_md</td></tr>
+<tr><td class="bn">04</td><td class="nn">categorize_topic</td><td class="mm">classification/categorize.py</td><td><span class="tag t-gen">Anthropic call</span></td><td class="note">&#8594; topic label</td></tr>
+<tr><td class="bn">04</td><td class="nn">is_scheduling_related</td><td class="mm">calendaring/scheduling_intent.py</td><td><span class="tag t-det">deterministic</span></td><td class="note">gate: decides whether 05&#8211;06 run</td></tr>
+<tr><td class="bn">04</td><td class="nn">get_calendar_context</td><td class="mm">calendaring/context.py</td><td><span class="tag t-io">network I/O</span></td><td class="note">free/busy over a 7-day window</td></tr>
+<tr><td class="bn">04</td><td class="nn">extract_proposed_event</td><td class="mm">calendaring/propose.py</td><td><span class="tag t-gen">Anthropic call</span></td><td class="note">&#8594; ProposedEvent, status SUGGESTED</td></tr>
+<tr><td class="bn">04</td><td class="nn">generate_reply_outline</td><td class="mm">drafting/outline.py</td><td><span class="tag t-gen">Anthropic call</span></td><td class="note">gated on read &#8743; &#172;no_reply</td></tr>
+<tr><td class="bn">04</td><td class="nn">expand_outline_to_full_draft</td><td class="mm">drafting/expand.py</td><td><span class="tag t-gen">Anthropic call</span></td><td class="note">on demand, not in the pass</td></tr>
+<tr><td class="bn">04</td><td class="nn">events insert / patch / delete</td><td class="mm">calendaring/events.py</td><td><span class="tag t-io">network I/O</span></td><td class="note">only after the user approves</td></tr>
+<tr><td class="bn">05</td><td class="nn">persist</td><td class="mm">pipeline/persist.py</td><td><span class="tag t-det">deterministic</span></td><td class="note">processed_email read/write</td></tr>
+<tr><td class="bn">05</td><td class="nn">incremental / staleness</td><td class="mm">pipeline/incremental.py</td><td><span class="tag t-det">deterministic</span></td><td class="note">which stages a change invalidates</td></tr>
+<tr><td class="bn">05</td><td class="nn">refresh</td><td class="mm">pipeline/refresh.py</td><td><span class="tag t-det">deterministic</span></td><td class="note">re-runs a single email&#x27;s stages</td></tr>
+<tr><td class="bn">05</td><td class="nn">feedback.record / apply</td><td class="mm">feedback/</td><td><span class="tag t-det">deterministic</span></td><td class="note">sender priors, then rescore</td></tr>
+<tr><td class="bn">06</td><td class="nn">_bm25</td><td class="mm">retrieval/search.py</td><td><span class="tag t-det">deterministic</span></td><td class="note">fts5 over chunk_fts</td></tr>
+<tr><td class="bn">06</td><td class="nn">_vector</td><td class="mm">retrieval/search.py</td><td><span class="tag t-vec">embedding call</span></td><td class="note">query embedding vs chunk_vec</td></tr>
+<tr><td class="bn">06</td><td class="nn">_graph</td><td class="mm">retrieval/_graph_read.py</td><td><span class="tag t-det">deterministic</span></td><td class="note">neighbors via mention and relation</td></tr>
+<tr><td class="bn">06</td><td class="nn">RRF fuse</td><td class="mm">retrieval/search.py</td><td><span class="tag t-det">deterministic</span></td><td class="note">&#931; 1/(60 + rank), channel recorded per hit</td></tr>
+<tr><td class="bn">06</td><td class="nn">build_pack</td><td class="mm">retrieval/pack.py</td><td><span class="tag t-det">deterministic</span></td><td class="note">anchor + foreign sections &#8594; ContextPack</td></tr>
+<tr><td class="bn">06</td><td class="nn">rebuild_dirty</td><td class="mm">retrieval/briefs.py</td><td><span class="tag t-gen">Anthropic call</span></td><td class="note">regenerates node_brief when evidence moves</td></tr>
+<tr><td class="bn">07</td><td class="nn">loop.run</td><td class="mm">agent/loop.py</td><td><span class="tag t-gen">Anthropic call</span></td><td class="note">&#8804; 8 turns; refuses to start on Ollama</td></tr>
+<tr><td class="bn">07</td><td class="nn">tools.dispatch</td><td class="mm">agent/tools.py</td><td><span class="tag t-det">deterministic</span></td><td class="note">9 specs; every failure becomes a tool_result</td></tr>
+<tr><td class="bn">07</td><td class="nn">conversation</td><td class="mm">agent/conversation.py</td><td><span class="tag t-det">deterministic</span></td><td class="note">append and replay, thinking blocks intact</td></tr>
+<tr><td class="bn">08</td><td class="nn">api/main.py</td><td class="mm">api/</td><td><span class="tag t-det">deterministic</span></td><td class="note">15 routes behind require_token</td></tr>
+<tr><td class="bn">08</td><td class="nn">extension</td><td class="mm">extension/</td><td><span class="tag t-det">deterministic</span></td><td class="note">MV3 content script injected into Gmail</td></tr>
+<tr><td class="bn">08</td><td class="nn">valence-frontend</td><td class="mm">valence-frontend/</td><td><span class="tag t-det">deterministic</span></td><td class="note">Vite + React + Tailwind</td></tr>
+<tr><td class="bn">08</td><td class="nn">7 &#215; cli.py</td><td class="mm">*/cli.py</td><td><span class="tag t-det">deterministic</span></td><td class="note">argparse entry point per package</td></tr></tbody>
+    </table>
+  </div>
+</section>
+
+<section>
+  <div class="shead">
+    <span class="kicker">Reading the sheet</span>
+    <h2>Four things the drawing makes visible</h2>
+  </div>
+  <div class="notes">
+    <article class="n-gen">
+      <h3>Seven model calls per email</h3>
+      <p>extract, the classify fallback, score, summarize, categorize, propose_event
+      and outline each cost one round trip. That is the number that sets the bill for
+      a full run, and the reason every one of those stages is independently skippable
+      from the CLI.</p>
+    </article>
+    <article class="n-det">
+      <h3>The gates come before the spend</h3>
+      <p>Both expensive branches sit behind a deterministic gate. <code>is_scheduling_related</code>
+      decides whether the calendar nodes run at all, and the outline node is gated on
+      read status and <code>&#172;no_reply</code>. Cheap checks guard costly work, never
+      the other way round.</p>
+    </article>
+    <article class="n-vec">
+      <h3>Retrieval fuses three channels</h3>
+      <p>Keyword over fts5, cosine over stored vectors, and graph neighbours &#8212; merged
+      by reciprocal rank rather than a tuned weighting, so adding a channel later
+      does not mean re-tuning the other two. Each hit records which channels found it.</p>
+    </article>
+    <article class="n-io">
+      <h3>Side effects are few and late</h3>
+      <p>Only three nodes change anything outside the database, and all three are
+      Google calls. Nothing sends email. A proposed event stays <code>SUGGESTED</code>
+      until a person approves it, and once approved or declined a re-run will not
+      touch it again.</p>
+    </article>
+  </div>
+</section>
+
+<footer>
+  <span>Valence &#183; AI email agent</span>
+  <span>drawn from source at c895c8d</span>
+  <span>3 tracks &#183; 158 python modules</span>
+  <span>sheet 1 of 1</span>
+</footer>
+
+</div>
