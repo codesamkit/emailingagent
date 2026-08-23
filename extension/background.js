@@ -34,3 +34,59 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
   return true; // keep the message channel open for the async response
 });
+
+// Streaming transport for the agent chat endpoint: chrome.runtime.sendMessage
+// (above) can't stream a response, and with up to 8 tool turns a chat reply
+// can take 20+ seconds — a blocking spinner for that long reads as broken.
+// The content script opens a port; this fetches the SSE endpoint and posts
+// each parsed event over the port as it arrives, rather than waiting for the
+// whole response like every other call above does.
+chrome.runtime.onConnect.addListener((port) => {
+  if (port.name !== "agent-chat") return;
+
+  port.onMessage.addListener(async (message) => {
+    if (message?.type !== "start") return;
+    const base = await backendUrl();
+    try {
+      const response = await fetch(base + "/api/agent/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: message.message,
+          conversationId: message.conversationId || undefined,
+        }),
+      });
+      if (!response.ok || !response.body) {
+        port.postMessage({ type: "error", error: "HTTP " + response.status });
+        return;
+      }
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const chunks = buffer.split("\n\n");
+        buffer = chunks.pop(); // the last piece may be an incomplete chunk
+        for (const chunk of chunks) {
+          const line = chunk.split("\n").find((l) => l.startsWith("data: "));
+          if (!line) continue;
+          try {
+            port.postMessage(JSON.parse(line.slice("data: ".length)));
+          } catch (_e) {
+            // Malformed SSE chunk — skip it rather than kill the stream.
+          }
+        }
+      }
+    } catch (error) {
+      port.postMessage({ type: "error", error: String(error) });
+    } finally {
+      try {
+        port.disconnect();
+      } catch (_e) {
+        // Already disconnected (e.g. the content script tore down the panel).
+      }
+    }
+  });
+});

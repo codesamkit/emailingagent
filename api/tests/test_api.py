@@ -217,6 +217,38 @@ class TestGetEmail:
         assert body["emails"][0]["calendarContext"] is None
         assert body["emails"][0]["hasCalendarContext"] is True
 
+    def test_related_context_is_empty_before_any_extraction_has_run(self, client):
+        """Real query against the context-graph tables (Checkpoint 0), which
+        are empty until Track A's extraction pipeline runs -- not a fixture,
+        just naturally empty right now."""
+        body = client.get("/api/emails/read-eligible").json()
+        assert body["relatedContext"] == {"entities": [], "relatedEmailIds": []}
+
+    def test_related_context_surfaces_real_mentions(self, client):
+        from models import db as models_db
+
+        with models_db.connect(main.DB_PATH) as conn:
+            models_db.prepare(conn)
+            conn.execute(
+                "INSERT INTO entity (entity_id, kind, canonical_name, normalized_key) "
+                "VALUES ('ent-1', 'case', 'Henderson escalation', 'hend-4471')"
+            )
+            conn.execute(
+                "INSERT INTO mention (mention_id, entity_id, email_id, span_text, confidence, source) "
+                "VALUES ('m1', 'ent-1', 'read-eligible', 'Henderson', 1.0, 'regex')"
+            )
+            conn.execute(
+                "INSERT INTO mention (mention_id, entity_id, email_id, span_text, confidence, source) "
+                "VALUES ('m2', 'ent-1', 'unread', 'Henderson', 1.0, 'regex')"
+            )
+            conn.commit()
+
+        body = client.get("/api/emails/read-eligible").json()
+        assert body["relatedContext"]["entities"] == [
+            {"entityId": "ent-1", "kind": "case", "name": "Henderson escalation"}
+        ]
+        assert body["relatedContext"]["relatedEmailIds"] == ["unread"]
+
     def test_unknown_id_is_404(self, client):
         assert client.get("/api/emails/nope").status_code == 404
 

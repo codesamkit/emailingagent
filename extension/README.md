@@ -30,6 +30,23 @@ A Manifest V3 extension that surfaces Valence (the email agent) inside Gmail:
   every 2 minutes (and on demand when you open a not-yet-processed email),
   which ingests new Gmail messages and runs the incremental pipeline. No
   manual `python -m pipeline.cli process` needed while the backend is up.
+- **Ask tab** — a third panel tab, a chat interface over the in-app agent
+  (`POST /api/agent/chat`). Streams its reply as it's produced (a dedicated
+  `chrome.runtime.connect` port, since the fetch proxy below can't stream),
+  shows which tools it used, and lists which emails its answer cites — click
+  one to open that thread, same navigation as the Inbox tab's rows. The
+  conversation is persisted server-side (`agent_conversation`/
+  `agent_message`), so `GET /api/agent/conversations/{id}` has the full
+  history even if this tab's in-memory state is lost.
+- **Context section** — linked case/project chips and related emails for the
+  open message, pulled from the context graph (`chunk`/`entity`/`mention`/
+  `relation`, Checkpoint 0). Empty until the extraction pipeline has actually
+  run over your mail; the wiring is real, not a placeholder.
+- **Correct this** — the sender-priors feedback picker (segmented importance
+  level + "this sender is automated/a real correspondent"), ported from the
+  now-unmaintained `api/static/index.html` debug page. Same
+  `POST /api/emails/{id}/feedback` endpoint, same "applies to every future
+  email from this sender" behavior.
 
 The extension is a frontend only. The FastAPI backend stays the brain; all
 requests go through the background service worker to `http://127.0.0.1:8000`
@@ -76,9 +93,10 @@ reply outlines) show up on their own.
 | File | Role |
 | --- | --- |
 | `manifest.json` | MV3 manifest: content scripts on `mail.google.com`, local host permissions |
-| `background.js` | Service worker — proxies all API fetches (avoids page CORS/CSP) |
+| `background.js` | Service worker — proxies all API fetches (avoids page CORS/CSP), plus a `chrome.runtime.connect` port transport for streaming `/api/agent/chat` |
 | `content/api.js` | API client + 60s-refreshing index of processed emails by thread/message id |
+| `content/ask.js` | The Ask tab's chat UI (`EmailAgentAsk`), mounted into the panel by `detail.js` |
 | `content/inbox.js` | MutationObserver that stamps importance badges on list rows |
-| `content/detail.js` | Floating panel for the open email; expand-to-draft flow |
+| `content/detail.js` | Floating panel (Email / Inbox / Ask tabs) for the open email; feedback picker, context chips, expand-to-draft flow |
 | `content/styles.css` | All injected styles, `ea-` prefixed |
 | `options.html/.js` | Backend URL setting (`chrome.storage.sync`) |

@@ -15,6 +15,7 @@ explicitly built and gated the same way.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from dataclasses import replace
@@ -24,7 +25,7 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import Body, Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 from models.schema import ProposedEventStatus, ReplyOutlineStatus
@@ -131,11 +132,54 @@ def list_emails(
     }
 
 
+def _related_context(email_id: str) -> Dict[str, Any]:
+    """Case/project entities mentioned in this email, and other emails that
+    share those entities — read directly from the context-graph tables
+    (Checkpoint 0's chunk/entity/mention/relation, PHASES-COMPLEX.md).
+
+    This is real wiring against real tables, not a fixture — it just has
+    nothing to return until Track A's extraction pipeline (context/extract.py)
+    actually populates `mention`, since nothing has written to that table yet.
+    Kept here rather than in a context/store.py this track doesn't own.
+    """
+    from models import db as models_db
+
+    with models_db.connect(DB_PATH) as conn:
+        models_db.prepare(conn)
+        entity_rows = conn.execute(
+            "SELECT DISTINCT e.entity_id, e.kind, e.canonical_name "
+            "FROM mention m JOIN entity e ON e.entity_id = m.entity_id "
+            "WHERE m.email_id = ? AND e.kind IN ('case', 'project') "
+            "ORDER BY e.salience DESC LIMIT 10",
+            (email_id,),
+        ).fetchall()
+        entities = [dict(row) for row in entity_rows]
+
+        related_email_ids: List[str] = []
+        if entities:
+            entity_ids = [e["entity_id"] for e in entities]
+            placeholders = ",".join("?" for _ in entity_ids)
+            rows = conn.execute(
+                "SELECT DISTINCT email_id FROM mention "
+                "WHERE entity_id IN ({0}) AND email_id != ? LIMIT 10".format(placeholders),
+                (*entity_ids, email_id),
+            ).fetchall()
+            related_email_ids = [row["email_id"] for row in rows]
+
+    return {
+        "entities": [
+            {"entityId": e["entity_id"], "kind": e["kind"], "name": e["canonical_name"]}
+            for e in entities
+        ],
+        "relatedEmailIds": related_email_ids,
+    }
+
+
 @app.get("/api/emails/{email_id}", dependencies=[Depends(require_token)])
 def get_email(email_id: str) -> Dict[str, Any]:
-    """One email in full: processed fields, calendar context, and the
-    original message text from `raw_email` (null if that row is gone,
-    e.g. a database written before ingestion ran)."""
+    """One email in full: processed fields, calendar context, the original
+    message text from `raw_email` (null if that row is gone, e.g. a database
+    written before ingestion ran), and its context-graph neighborhood."""
     email = persist.get(email_id, DB_PATH)
     if email is None:
         raise HTTPException(status_code=404, detail="No processed email {0!r}".format(email_id))
@@ -145,6 +189,7 @@ def get_email(email_id: str) -> Dict[str, Any]:
 
     raw = raw_store.get(email_id, DB_PATH)
     payload["body"] = raw.body if raw else None
+    payload["relatedContext"] = _related_context(email_id)
     return payload
 
 
@@ -485,6 +530,81 @@ def cancel_calendar_event(email_id: str) -> Dict[str, Any]:
     cleared = replace(proposed, google_event_id=None, error=None)
     persist.update_proposed_event_status(email_id, ProposedEventStatus.DECLINED, cleared, DB_PATH)
     return email_to_json(persist.get(email_id, DB_PATH), include_calendar=True)
+
+
+class AgentChatBody(BaseModel):
+    message: str
+    conversationId: Optional[str] = None
+
+
+def _agent_event_to_json(event: Any, conversation_id: str) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {"type": event.type}
+    if event.type == "text_delta":
+        payload["text"] = event.text
+    elif event.type == "tool_start":
+        payload["tool"] = event.tool
+        payload["toolInput"] = event.tool_input
+    elif event.type == "tool_end":
+        payload["tool"] = event.tool
+        payload["toolResult"] = event.tool_result
+    elif event.type == "done":
+        payload["conversationId"] = conversation_id
+    return payload
+
+
+@app.post("/api/agent/chat", dependencies=[Depends(require_token)])
+def agent_chat(body: AgentChatBody) -> StreamingResponse:
+    """Chat with the in-app agent over Server-Sent Events.
+
+    Creates a conversation if none is given, appends the user's message,
+    runs agent.loop.run, and streams its events out as they're produced —
+    one JSON object per `data:` line. On the final "done" event, every
+    message the loop generated (assistant turns and interleaved tool-result
+    turns) is persisted via agent.conversation.append, so the next chat call
+    against the same conversationId continues with full history.
+
+    A provider misconfiguration (agent routed to ollama, which has no
+    tool-calling support) surfaces as a `{"type": "error", ...}` event
+    inside the stream rather than an HTTP error status — by the time that
+    failure is known, the 200 response has already started.
+    """
+    from agent import conversation as agent_conversation
+    from agent.loop import OllamaToolsUnsupportedError
+    from agent.loop import run as run_agent
+
+    conversation_id = body.conversationId or agent_conversation.create(db_path=DB_PATH)
+    agent_conversation.append(conversation_id, "user", body.message, DB_PATH)
+    messages = agent_conversation.history(conversation_id, db_path=DB_PATH)
+
+    def event_stream():
+        try:
+            for event in run_agent(messages, db_path=DB_PATH):
+                if event.type == "done":
+                    for new_message in event.new_messages:
+                        agent_conversation.append(
+                            conversation_id, new_message["role"], new_message["content"], DB_PATH
+                        )
+                yield "data: {0}\n\n".format(
+                    json.dumps(_agent_event_to_json(event, conversation_id))
+                )
+        except OllamaToolsUnsupportedError as exc:
+            yield "data: {0}\n\n".format(json.dumps({"type": "error", "error": str(exc)}))
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+@app.get("/api/agent/conversations/{conversation_id}", dependencies=[Depends(require_token)])
+def get_agent_conversation(conversation_id: str) -> Dict[str, Any]:
+    from agent import conversation as agent_conversation
+
+    if agent_conversation.get(conversation_id, db_path=DB_PATH) is None:
+        raise HTTPException(
+            status_code=404, detail="No agent conversation {0!r}".format(conversation_id)
+        )
+    return {
+        "conversationId": conversation_id,
+        "messages": agent_conversation.history(conversation_id, db_path=DB_PATH),
+    }
 
 
 @app.get("/api/stats", dependencies=[Depends(require_token)])
