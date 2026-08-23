@@ -92,5 +92,21 @@ const EmailAgent = (() => {
       call(`/api/emails/${encodeURIComponent(emailId)}/calendar-event/approve`, "POST"),
     declineEvent: (emailId) =>
       call(`/api/emails/${encodeURIComponent(emailId)}/calendar-event/decline`, "POST"),
+    sendFeedback: (emailId, payload) =>
+      call(`/api/emails/${encodeURIComponent(emailId)}/feedback`, "POST", payload),
+    // Agent chat over the background.js port transport (background.js can't
+    // use `call()`'s sendMessage proxy here since that can't stream). Opens
+    // one port per message; onEvent fires for every SSE event the backend
+    // sends (text_delta / tool_start / tool_end / done / error), in order.
+    // Returns a function that closes the port early if the caller navigates
+    // away mid-stream.
+    chatStream: (message, conversationId, onEvent) => {
+      const port = chrome.runtime.connect({ name: "agent-chat" });
+      port.onMessage.addListener(onEvent);
+      port.postMessage({ type: "start", message, conversationId });
+      return () => port.disconnect();
+    },
+    getConversation: (conversationId) =>
+      call(`/api/agent/conversations/${encodeURIComponent(conversationId)}`),
   };
 })();

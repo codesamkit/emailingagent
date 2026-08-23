@@ -58,7 +58,7 @@
     header.appendChild(el("span", "ea-panel-title", "Valence"));
 
     const tabs = el("div", "ea-tabs");
-    for (const [key, label] of [["email", "Email"], ["inbox", "Inbox"]]) {
+    for (const [key, label] of [["email", "Email"], ["inbox", "Inbox"], ["ask", "Ask"]]) {
       const tab = el("button", "ea-tab", label);
       tab.dataset.tab = key;
       tab.addEventListener("click", () => setTab(key));
@@ -76,8 +76,11 @@
     panel.appendChild(header);
     panel.appendChild(el("div", "ea-panel-body"));
     panel.appendChild(el("div", "ea-panel-inbox"));
+    const askPane = el("div", "ea-panel-ask");
+    panel.appendChild(askPane);
     document.body.appendChild(panel);
 
+    EmailAgentAsk.mount(askPane);
     setTab("email");
     renderInbox();
     EmailAgent.onRefresh(renderInbox);
@@ -92,6 +95,7 @@
     );
     panel.querySelector(".ea-panel-body").hidden = key !== "email";
     panel.querySelector(".ea-panel-inbox").hidden = key !== "inbox";
+    panel.querySelector(".ea-panel-ask").hidden = key !== "ask";
   }
 
   function showMessage(text) {
@@ -137,6 +141,8 @@
       body.appendChild(sec);
     }
 
+    renderFeedback(body, email);
+    renderContext(body, email);
     renderProposedEvent(body, email);
 
     const ctx = email.calendarContext;
@@ -186,6 +192,91 @@
       body.appendChild(el("div", "ea-empty", "Generating reply outline…"));
       generateOutlineNow(email.emailId);
     }
+  }
+
+  // --- sender-priors feedback loop: the ONLY UI for this feature now that
+  // the webapp (api/static/index.html) is being dropped — see commit
+  // 698aba4. Ported logic, not reimplemented: same endpoint, same payload
+  // shapes ({level} / {isNoReply}), same "applies to every future email
+  // from this sender" behavior. ------------------------------------------
+  function renderFeedback(body, email) {
+    const sec = section("Correct this");
+    const seg = el("span", "ea-feedback-seg");
+    const buttons = [];
+    for (const level of ["low", "medium", "high", "urgent"]) {
+      const btn = el("button", "ea-feedback-level", level);
+      if (email.importanceLevel === level) btn.classList.add("ea-feedback-level-on");
+      btn.addEventListener("click", () => submitFeedback(email.emailId, { level }, buttons));
+      seg.appendChild(btn);
+      buttons.push(btn);
+    }
+    sec.appendChild(seg);
+
+    const noReplyBtn = el(
+      "button",
+      "ea-button ea-button-quiet",
+      email.isNoReply ? "This sender is a real correspondent" : "This sender is automated"
+    );
+    noReplyBtn.addEventListener("click", () =>
+      submitFeedback(email.emailId, { isNoReply: !email.isNoReply }, buttons)
+    );
+    buttons.push(noReplyBtn);
+    sec.appendChild(noReplyBtn);
+
+    sec.appendChild(
+      el(
+        "p",
+        "ea-text ea-muted",
+        `Applies to every email from ${email.sender || "this sender"}, now and on every future run.`
+      )
+    );
+    body.appendChild(sec);
+  }
+
+  async function submitFeedback(emailId, payload, buttons) {
+    buttons.forEach((b) => (b.disabled = true));
+    const result = await EmailAgent.sendFeedback(emailId, payload);
+    if (emailId !== currentEmailId) return;
+    if (result?.ok) {
+      render(result.data.email);
+    } else {
+      buttons.forEach((b) => (b.disabled = false));
+      showMessage(result?.data?.detail || "Feedback failed — check the backend logs.");
+    }
+  }
+
+  // --- context-graph neighborhood: what makes cross-thread correlation
+  // VISIBLE rather than merely felt. Empty until Track A's extraction
+  // pipeline has actually run (api/main.py's relatedContext is real
+  // wiring against real tables, just naturally empty right now). ---------
+  function renderContext(body, email) {
+    const ctx = email.relatedContext;
+    if (!ctx || (!ctx.entities?.length && !ctx.relatedEmailIds?.length)) return;
+
+    const sec = section("Context");
+    if (ctx.entities?.length) {
+      const chips = el("div", "ea-chips");
+      ctx.entities.forEach((entity) => chips.appendChild(el("span", "ea-chip", entity.name)));
+      sec.appendChild(chips);
+    }
+    if (ctx.relatedEmailIds?.length) {
+      const list = el("div", "ea-inbox-list");
+      ctx.relatedEmailIds.forEach((relatedId) => {
+        const known = EmailAgent.forEmail(relatedId);
+        const row = el("button", "ea-inbox-row");
+        row.appendChild(el("span", "ea-inbox-subject", known?.subject || relatedId));
+        if (known?.sender) row.appendChild(el("span", "ea-inbox-sender", known.sender));
+        row.addEventListener("click", () => {
+          if (!known) return;
+          // Same navigation the Inbox tab's own rows use.
+          location.hash = `#all/${known.threadId}`;
+          setTab("email");
+        });
+        list.appendChild(row);
+      });
+      sec.appendChild(list);
+    }
+    body.appendChild(sec);
   }
 
   // --- proposed calendar event: extracted by the pipeline, created on

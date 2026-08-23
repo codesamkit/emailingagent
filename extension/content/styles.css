@@ -294,3 +294,75 @@
 .ea-event-ok { color: var(--ea-success); font-weight: 600; margin-top: 6px; }
 .ea-event-actions { display: flex; gap: 6px; }
 .ea-button-quiet { color: var(--ea-text-muted); }
+
+/* ---- sender-priors feedback picker ---- */
+
+.ea-feedback-seg {
+  display: inline-flex;
+  border: 1px solid var(--ea-border);
+  border-radius: 7px;
+  overflow: hidden;
+  margin-right: 8px;
+}
+
+.ea-feedback-level {
+  border: none;
+  border-left: 1px solid var(--ea-border);
+  background: transparent;
+  color: var(--ea-text-muted);
+  padding: 4px 10px;
+  font: 600 11px Roboto, Arial, sans-serif;
+  cursor: pointer;
+}
+
+.ea-feedback-level:first-child { border-left: none; }
+.ea-feedback-level:hover { background: var(--ea-surface-2); }
+.ea-feedback-level:disabled { color: var(--ea-low); cursor: default; }
+.ea-feedback-level-on { background: var(--ea-accent); color: #fff; }
+
+/* ---- Ask tab ---- */
+
+.ea-panel-ask { display: flex; flex-direction: column; padding: 10px 12px 12px; max-height: 55vh; }
+.ea-collapsed .ea-panel-ask { display: none; }
+
+.ea-ask-list { overflow-y: auto; flex: 1; margin-bottom: 8px; }
+
+.ea-ask-msg { margin-bottom: 10px; }
+.ea-ask-msg-text { white-space: pre-wrap; }
+.ea-ask-msg-user .ea-ask-msg-text { font-weight: 600; }
+.ea-ask-msg-assistant .ea-ask-msg-text { color: var(--ea-text); }
+
+.ea-ask-status { color: var(--ea-text-muted); font-size: 11px; font-style: italic; margin-top: 2px; }
+.ea-ask-error { color: var(--ea-danger); font-size: 12px; margin-top: 4px; }
+
+.ea-ask-sources { margin-top: 4px; font-size: 11px; color: var(--ea-text-muted); }
+.ea-ask-sources summary { cursor: pointer; }
+.ea-ask-sources .ea-list { margin-top: 4px; }
+
+.ea-ask-source-link {
+  border: none;
+  background: none;
+  color: var(--ea-accent-strong);
+  cursor: pointer;
+  font: 12px Roboto, Arial, sans-serif;
+  padding: 0;
+  text-align: left;
+}
+
+.ea-ask-source-link:hover { text-decoration: underline; }
+
+.ea-ask-bar { display: flex; gap: 6px; }
+
+.ea-ask-input {
+  flex: 1;
+  padding: 6px 8px;
+  border: 1px solid var(--ea-border);
+  border-radius: 6px;
+  font: 12px Roboto, Arial, sans-serif;
+  /* background is explicit: the UA default is white, which would leave
+     light --ea-text unreadable on the dark panel. */
+  background: var(--ea-surface-2);
+  color: var(--ea-text);
+}
+
+.ea-ask-input:disabled { background: var(--ea-surface); color: var(--ea-low); }
