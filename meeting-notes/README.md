@@ -1,7 +1,7 @@
 # Meeting Notes — StrideCore Simulation Corpus
 
-Ground-truth meeting notes generated alongside the ~160-email simulation corpus
-delivered to the Valence test inbox on 2026-08-23.
+Ground-truth meeting notes generated alongside the 225-email simulation corpus
+delivered to the Valence test inbox (Act 1: 160 emails, Act 2: 65 emails).
 
 ## Purpose
 
@@ -30,6 +30,23 @@ Reports to Dana Whitfield (COO). Owns SC-400 sustaining and the SC-500 program.
 
 Full cast and account list: see `../CORPUS-WORLD.md`.
 
+## Act 2 (September)
+
+Act 1 is discovery. Act 2 is consequences, and three new pressures:
+
+6. **The freeze slips again** — the soak finds FW-2278, an OTA ordering bug
+   present since 2024 that the timeout fix made reachable. The Hongli September
+   build slot is lost; next is October 12. Grant's August warning lands exactly
+   as he described it.
+7. **Hector Villalobos resigns** — the support engineer who found three defects,
+   because corrective actions have no owner. His exit document ends up requested
+   by the board.
+8. **A journalist has the story** — accurately, with a pre-publication factual
+   review offer and a Sept 12 deadline.
+
+Resolutions: Bastion closes at half, Vantera's underwriters accept the corrected
+data, Kaiho's design review passes, Hongli T2 conforms, Rev C ships.
+
 ## The five storylines everything hangs off
 
 1. **SC-500 firmware freeze** — Aug 7 target slips. Regression-scope argument
@@ -57,6 +74,8 @@ Full cast and account list: see `../CORPUS-WORLD.md`.
 | `2026-08-26-vantera-lot22b-review.md` | Aug 26 | External customer |
 | `2026-08-27-sc500-program-review.md` | Aug 27 | Internal recurring — decisions |
 | `2026-09-01-kaiho-regulatory-call.md` | Sep 1 | External customer |
+| `2026-09-11-northline-board-meeting.md` | Sep 11 | Board |
+| `2026-09-16-q3-leadership-offsite.md` | Sep 16 | Internal — Act 2 resolution |
 
 ## Note on dates
 

@@ -1,7 +1,11 @@
 # StrideCore Simulation — World Bible
 
-Reference for the ~160-email corpus delivered to the Valence test inbox
-(rsbhacks@gmail.com) on 2026-08-23. Fictional timeline: 2026-07-13 → 2026-09-01.
+Reference for the 225-email corpus delivered to the Valence test inbox
+(rsbhacks@gmail.com). Fictional timeline: 2026-03 (backstory) → 2026-09-30.
+
+Delivered in two acts:
+- **Act 1** — 160 emails, 79 threads. July–early September. The discovery arc.
+- **Act 2** — 65 emails, 34 threads. September. Consequences and new pressure.
 
 ## Company
 
@@ -82,15 +86,16 @@ SC-400 in the "Flux" trainer; spring line needs Rev C by Oct 1.
 
 ## Corpus composition
 
-| Bucket | Msgs | Threads |
-|---|---|---|
-| Internal | 48 | 15 |
-| External | 38 | 13 |
-| CRM cases | 32 | 8 |
-| Automated / no-reply | 30 | 30 |
-| Spam / phishing | 12 | 12 |
-| **Total** | **160** | **78** |
+| Bucket | Act 1 | Act 2 | Total |
+|---|---|---|---|
+| Internal | 48 | 22 | 70 |
+| External | 37 | 16 | 53 |
+| CRM cases | 32 | 12 | 44 |
+| Automated / no-reply | 30 | 10 | 40 |
+| Spam / phishing | 13 | 5 | 18 |
+| **Total** | **160** | **65** | **225** |
 
+Threads: 79 (Act 1) + 34 (Act 2) = **113**.
 Thread depth ranges 1–6 messages. Deepest: the SC-500 freeze thread (6).
 
 ## CRM cases
@@ -105,6 +110,8 @@ Thread depth ranges 1–6 messages. Deepest: the SC-500 freeze thread (6).
 | CS-40350 | Vantera | RMA authorization, 180 units tranche 1 | S2 |
 | CS-40377 | Bastion | Charging dock firmware mismatch | S2 |
 | CS-40390 | Aurelio | Sample kit, 3 of 10 DOA | S3 |
+| CS-40447 | Meridian | OTA bricks 3 panel units; defect dates to 2024 | S1 |
+| CS-40460 | Aurelio | Zone saturation on rigid sole (640 kPa vs 400 spec) | Med |
 
 ## Sender encoding
 

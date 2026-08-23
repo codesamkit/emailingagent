@@ -197,3 +197,41 @@ class TestSummarizeBatch(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestTrimToSentence:
+    """The schema's length cap stops the model mid-token rather than letting
+    it finish, so the tail has to be repaired here."""
+
+    def test_drops_a_trailing_partial_sentence(self):
+        from summarization.summarize import _trim_to_sentence
+
+        assert _trim_to_sentence(
+            "The shipment is held at customs. He needs the export code and details about his/a"
+        ) == "The shipment is held at customs."
+
+    def test_leaves_a_complete_summary_alone(self):
+        from summarization.summarize import _trim_to_sentence
+
+        text = "Manny asks you to confirm the export code by Friday."
+        assert _trim_to_sentence(text) == text
+
+    def test_keeps_a_short_terminator_free_summary(self):
+        """A one-line notification with no full stop must not be emptied."""
+        from summarization.summarize import _trim_to_sentence
+
+        assert _trim_to_sentence("Your DHL package was delivered") == (
+            "Your DHL package was delivered"
+        )
+
+    def test_handles_full_width_stops(self):
+        from summarization.summarize import _trim_to_sentence
+
+        assert _trim_to_sentence(
+            "\u4f50\u85e4\u3055\u3093\u304b\u3089\u306e\u9023\u7d61\u3067\u3059\u3002Next steps are unclear and he"
+        ) == "\u4f50\u85e4\u3055\u3093\u304b\u3089\u306e\u9023\u7d61\u3067\u3059\u3002"
+
+    def test_empty_stays_empty(self):
+        from summarization.summarize import _trim_to_sentence
+
+        assert _trim_to_sentence("   ") == ""

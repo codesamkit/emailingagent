@@ -240,6 +240,11 @@
     buttons.push(noReplyBtn);
     sec.appendChild(noReplyBtn);
 
+    const forgetBtn = el("button", "ea-button ea-button-quiet", "Forget corrections");
+    forgetBtn.addEventListener("click", () => clearFeedback(email.emailId, buttons));
+    buttons.push(forgetBtn);
+    sec.appendChild(forgetBtn);
+
     sec.appendChild(
       el(
         "p",
@@ -248,6 +253,28 @@
       )
     );
     body.appendChild(sec);
+  }
+
+  // Clearing cannot simply restore the level the correction replaced — the
+  // model's original verdict was overwritten in place and never kept — so the
+  // backend re-scores the sender's mail. That costs one LLM call per email
+  // from this sender, which is why the button reports what it touched.
+  async function clearFeedback(emailId, buttons) {
+    buttons.forEach((b) => (b.disabled = true));
+    const result = await EmailAgent.clearFeedback(emailId);
+    if (emailId !== currentEmailId) return;
+    if (!result?.ok) {
+      buttons.forEach((b) => (b.disabled = false));
+      showMessage(result?.data?.detail || "Could not clear — check the backend logs.");
+      return;
+    }
+    const { removed, rescored } = result.data;
+    render(result.data.email);
+    showMessage(
+      removed
+        ? `Forgot ${removed} correction${removed === 1 ? "" : "s"}; re-scored ${rescored} email${rescored === 1 ? "" : "s"}.`
+        : "No corrections stored for this sender."
+    );
   }
 
   async function submitFeedback(emailId, payload, buttons) {

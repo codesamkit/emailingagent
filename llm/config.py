@@ -59,6 +59,14 @@ OLLAMA_TIMEOUT = float(os.environ.get("OLLAMA_TIMEOUT") or 300)
 # field under constrained decoding and burn the whole token budget without
 # ever closing the quote.
 OLLAMA_REPEAT_PENALTY = float(os.environ.get("OLLAMA_REPEAT_PENALTY") or 1.3)
+# Context window, in tokens. Ollama defaults to 4096 regardless of what the
+# model supports, and silently truncates anything longer instead of erroring
+# — so a long email loses its tail before the model ever reads it, and the
+# summary comes back confidently incomplete. Measured on the current corpus:
+# 31 of 163 bodies exceed 8000 characters and 8 exceed 12000, all of which
+# were being cut. 8192 is what gemma2 and most small local models actually
+# support; raise it for a model with a larger window.
+OLLAMA_NUM_CTX = int(os.environ.get("OLLAMA_NUM_CTX") or 8192)
 
 # --- Anthropic -------------------------------------------------------------
 ANTHROPIC_MODEL = _clean(os.environ.get("ANTHROPIC_MODEL")) or "claude-opus-5"

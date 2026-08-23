@@ -116,6 +116,12 @@ const EmailAgent = (() => {
       call(`/api/emails/${encodeURIComponent(emailId)}/calendar-event/decline`, "POST"),
     sendFeedback: (emailId, payload) =>
       call(`/api/emails/${encodeURIComponent(emailId)}/feedback`, "POST", payload),
+    // Undo for the above. Corrections are stored per sender and latest-wins,
+    // so without this a misclick sticks to every email from that sender for
+    // good — which is exactly how one stray pass through the level buttons
+    // silently pinned an entire inbox.
+    clearFeedback: (emailId) =>
+      call(`/api/emails/${encodeURIComponent(emailId)}/feedback`, "DELETE"),
     // Agent chat over the background.js port transport (background.js can't
     // use `call()`'s sendMessage proxy here since that can't stream). Opens
     // one port per message; onEvent fires for every SSE event the backend

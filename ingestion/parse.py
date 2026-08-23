@@ -181,6 +181,52 @@ def get_header(payload: Dict[str, Any], name: str) -> str:
     return ""
 
 
+# --- relay-tag senders -----------------------------------------------------
+# Some mail reaches an inbox through a single relay/forwarding account, with
+# the real correspondent written into the front of the subject as
+# "[a.person@example.com]". Reading only the From: header there collapses
+# every message onto one sender, which silently breaks anything keyed on who
+# wrote the mail: no-reply detection, VIP scoring, per-sender feedback priors,
+# and the sender shown to the model in every prompt.
+#
+# The same reasoning is already written into context/extract.py, which scans
+# subjects for addresses so the entity graph does not collapse to one PERSON
+# node. This is that rule applied at the ingestion boundary instead of in one
+# consumer, so every downstream stage sees the real sender without knowing
+# the convention exists.
+#
+# Deliberately conservative: the tag must sit at the very start (after any
+# Re:/Fwd: chain) and must parse as an address. A subject like
+# "[CS-40218] Escalated to Severity 1" is left alone, and ordinary mail with
+# no tag is returned unchanged, so this costs nothing when it does not apply.
+_RELAY_TAG_RE = re.compile(
+    r"^(?P<prefix>(?:\s*(?:re|fwd|fw)\s*:\s*)*)"
+    r"\[\s*(?P<addr>[^\]\s@]+@[^\]\s@]+\.[^\]\s@]+)\s*\]\s*"
+    r"(?P<rest>.*)$",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def split_relay_tag(subject: str) -> Tuple[Optional[str], str]:
+    """Split a leading "[addr]" relay tag off a subject line.
+
+    Returns (relayed_sender_address, subject_without_tag). When there is no
+    tag — the ordinary case for real mail — returns (None, subject) so the
+    caller can treat tagged and untagged mail identically. Any Re:/Fwd:
+    prefix chain is preserved on the returned subject, since it carries
+    thread depth that scoring and the UI both read.
+    """
+    match = _RELAY_TAG_RE.match(subject or "")
+    if match is None:
+        return None, subject
+    rest = match.group("rest").strip()
+    if not rest:
+        # A subject that is *only* a tag would otherwise become empty; keep
+        # the original rather than hand downstream stages a blank subject.
+        return match.group("addr").strip(), subject
+    return match.group("addr").strip(), (match.group("prefix") + rest).strip()
+
+
 def _is_attachment(part: Dict[str, Any]) -> bool:
     body = part.get("body", {}) or {}
     return bool(part.get("filename")) or bool(body.get("attachmentId"))
@@ -305,17 +351,29 @@ def to_raw_email(message: Dict[str, Any]) -> RawEmail:
     """Map a `users.messages.get(format="full")` resource to a `RawEmail`."""
     payload = message.get("payload", {}) or {}
     label_ids = list(message.get("labelIds") or [])
+    headers = extract_headers(payload)
+
+    # Resolve the sender once, here, so no downstream stage has to know that
+    # relay-tagged mail exists. The envelope sender is preserved in the
+    # headers dict (already a free-form blob, so this needs no schema change)
+    # because it is still the address the message was actually delivered from.
+    envelope_sender = get_header(payload, "From")
+    subject = get_header(payload, "Subject")
+    relayed_sender, subject = split_relay_tag(subject)
+    if relayed_sender is not None:
+        headers["X-Envelope-From"] = envelope_sender
+
     return RawEmail(
         email_id=str(message.get("id", "")),
         thread_id=str(message.get("threadId", "")),
-        sender=get_header(payload, "From"),
-        subject=get_header(payload, "Subject"),
+        sender=relayed_sender or envelope_sender,
+        subject=subject,
         recipients=split_recipients(payload),
         body=extract_body(payload),
         snippet=normalize_whitespace(str(message.get("snippet", ""))),
         received_at=internal_date_to_datetime(message.get("internalDate")),
         read_status=UNREAD if "UNREAD" in label_ids else READ,
         label_ids=label_ids,
-        headers=extract_headers(payload),
+        headers=headers,
         has_attachments=has_attachments(payload),
     )

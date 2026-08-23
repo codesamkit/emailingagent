@@ -76,6 +76,68 @@ def test_unchanged_hash_results_in_zero_model_calls():
     assert len(client.calls) == calls_after_first  # no new calls made
 
 
+def test_placeholder_rows_are_regenerated_not_treated_as_fresh():
+    """A graph build can persist an empty brief that already carries an
+    evidence_hash. Matching on the hash alone declared those fresh, so they
+    were skipped on every run and the brief layer stayed permanently blank."""
+    from models import db as models_db
+    from models.schema import Brief
+    from context import store as context_store
+
+    path = build_fixture_db()
+    client = FakeClient()
+
+    # Establish the hash the rebuild would compute, then blank the row the way
+    # a graph build leaves it: hash present, no content, never generated.
+    briefs.rebuild_dirty(db_path=path, client=client)
+    brief = briefs.get_brief("case", "ent-case-henderson", db_path=path)
+    assert brief is not None
+    with models_db.connect(path) as conn:
+        conn.execute(
+            "UPDATE node_brief SET headline='', body_md='', open_items='[]',"
+            " generated_at=NULL WHERE node_type='case' AND node_id=?",
+            ("ent-case-henderson",),
+        )
+        conn.commit()
+
+    calls_before = len(client.calls)
+    rebuilt = briefs.rebuild_dirty(db_path=path, client=client)
+
+    assert rebuilt > 0, "placeholder brief was skipped as if it were current"
+    assert len(client.calls) > calls_before
+    refreshed = briefs.get_brief("case", "ent-case-henderson", db_path=path)
+    assert refreshed.body_md == _CANNED["body_md"]
+    assert refreshed.generated_at is not None
+
+
+def test_schema_avoids_constraints_the_api_rejects():
+    """`maxItems` on an array is rejected outright by the structured-output
+    validator ("For 'array' type, property 'maxItems' is not supported"), and
+    it fails the whole request -- so every brief silently failed to generate.
+    The bound is applied to the parsed result instead."""
+
+    def walk(node):
+        if isinstance(node, dict):
+            assert "maxItems" not in node, "maxItems is rejected by the API"
+            for value in node.values():
+                walk(value)
+        elif isinstance(node, list):
+            for value in node:
+                walk(value)
+
+    walk(briefs.RESPONSE_SCHEMA)
+
+
+def test_open_items_are_bounded_after_parsing():
+    path = build_fixture_db()
+    over_limit = dict(_CANNED)
+    over_limit["open_items"] = ["item {0}".format(i) for i in range(25)]
+    briefs.rebuild_dirty(db_path=path, client=FakeClient(over_limit))
+
+    brief = briefs.get_brief("case", "ent-case-henderson", db_path=path)
+    assert len(brief.open_items) == briefs.MAX_OPEN_ITEMS
+
+
 def test_reason_field_declared_before_answer_fields():
     keys = list(briefs.RESPONSE_SCHEMA["properties"].keys())
     assert keys[0] == "reason"

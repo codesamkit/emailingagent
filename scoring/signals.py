@@ -188,7 +188,16 @@ def compute_vip_senders(
     counts = sorted(row["n"] for row in rows)
     index = min(len(counts) - 1, int(round(percentile / 100.0 * (len(counts) - 1))))
     threshold = counts[index]
-    return frozenset(row["addr"] for row in rows if row["n"] >= threshold)
+    vips = {row["addr"] for row in rows if row["n"] >= threshold}
+
+    # The mailbox owner is the most-mentioned person in their own inbox by
+    # construction, so a frequency percentile always elects them. They are
+    # never the *sender* of mail arriving here, so the entry can only ever
+    # misfire — drop it rather than let it inflate a self-addressed message.
+    owner = resolve_account_owner()
+    if owner:
+        vips.discard(_addr_only(owner))
+    return frozenset(vips)
 
 
 def format_signals_for_prompt(signals: dict[str, Any]) -> str:

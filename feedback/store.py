@@ -95,6 +95,38 @@ def sender_priors(db_path: Optional[Path] = None) -> Dict[str, Dict[str, Any]]:
     return priors
 
 
+def clear(
+    sender: str, kind: Optional[str] = None, db_path: Optional[Path] = None
+) -> int:
+    """Forget corrections for a sender. Returns the number of rows removed.
+
+    Recording is append-only with latest-wins, which makes a correction easy
+    to give and — until this existed — impossible to take back. That is not a
+    theoretical gap: a five-second pass through the correction buttons left a
+    `level` prior on one sender that pinned 161 stored emails to the same
+    level, with no way to undo it from the UI and no reason visible in the
+    scores. Deleting the rows, rather than appending a "no opinion" marker,
+    keeps `sender_priors()` a straight latest-wins read with no third state.
+
+    `kind` limits the clear to 'level' or 'no_reply'; omitted, it forgets
+    everything recorded for the sender.
+    """
+    if kind is not None and kind not in KINDS:
+        raise ValueError("Unknown feedback kind: {0!r}".format(kind))
+
+    sql = "DELETE FROM feedback WHERE sender = ?"
+    params: list = [_addr_only(sender)]
+    if kind is not None:
+        sql += " AND kind = ?"
+        params.append(kind)
+
+    with db.connect(db_path) as conn:
+        _prepare(conn)
+        removed = conn.execute(sql, params).rowcount
+        conn.commit()
+    return int(removed)
+
+
 def count(db_path: Optional[Path] = None) -> int:
     with db.connect(db_path) as conn:
         _prepare(conn)

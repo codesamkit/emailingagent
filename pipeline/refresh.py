@@ -170,6 +170,34 @@ def process_incremental(
     return result
 
 
+def rescore_sender(sender: str, db_path: Optional[Path] = None) -> int:
+    """Re-run the scoring stage for every stored email from one sender.
+
+    Needed after a feedback prior is cleared. `feedback/apply.py` overwrites
+    importance_level/score/justification in place, and the model's original
+    verdict is not kept anywhere, so forgetting a prior cannot simply restore
+    what was there — the level has to be recomputed. Scoped to the one
+    sender so an undo costs a handful of LLM calls, not a full reprocess.
+
+    Returns the number of emails re-scored.
+    """
+    from scoring.signals import _addr_only
+
+    wanted = _addr_only(sender)
+    existing = {e.email_id: e for e in persist.all_processed(db_path)}
+    raws = [
+        raw
+        for raw in store.recent(10_000, db_path)
+        if _addr_only(raw.sender) == wanted
+    ]
+    if not raws:
+        return 0
+
+    pipeline = Pipeline.with_defaults(stages=("score",))
+    persist.upsert(pipeline.process(raws, existing=existing), db_path)
+    return len(raws)
+
+
 def refresh_one(email_id: str, db_path: Optional[Path] = None):
     """Re-fetch a single message from Gmail and run whatever stages it needs.
 

@@ -107,3 +107,56 @@ class TestApply(FeedbackDbTest):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestClear(FeedbackDbTest):
+    """Undo. Recording is append-only and latest-wins, so before clear()
+    existed a stray click stuck to every email from that sender for good."""
+
+    def test_forgets_every_kind_for_a_sender(self):
+        store.record("Bot <bot@shop.com>", store.KIND_LEVEL, "high", db_path=self.db)
+        store.record("Bot <bot@shop.com>", store.KIND_NO_REPLY, "true", db_path=self.db)
+
+        removed = store.clear("bot@shop.com", db_path=self.db)
+
+        self.assertEqual(removed, 2)
+        self.assertEqual(store.sender_priors(self.db), {})
+
+    def test_can_forget_one_kind_and_keep_the_other(self):
+        store.record("bot@shop.com", store.KIND_LEVEL, "high", db_path=self.db)
+        store.record("bot@shop.com", store.KIND_NO_REPLY, "true", db_path=self.db)
+
+        removed = store.clear("bot@shop.com", store.KIND_LEVEL, db_path=self.db)
+
+        self.assertEqual(removed, 1)
+        self.assertEqual(
+            store.sender_priors(self.db), {"bot@shop.com": {"is_no_reply": True}}
+        )
+
+    def test_normalizes_the_sender_like_record_does(self):
+        """record() stores the bare address; clear() must find it whether the
+        caller passes a bare address or a full 'Name <addr>' header."""
+        store.record("bot@shop.com", store.KIND_LEVEL, "low", db_path=self.db)
+
+        self.assertEqual(store.clear("Bot <bot@shop.com>", db_path=self.db), 1)
+
+    def test_clearing_an_unknown_sender_is_a_no_op(self):
+        self.assertEqual(store.clear("nobody@nowhere.com", db_path=self.db), 0)
+
+    def test_rejects_an_unknown_kind(self):
+        with self.assertRaises(ValueError):
+            store.clear("bot@shop.com", "nonsense", db_path=self.db)
+
+    def test_a_cleared_prior_stops_being_applied(self):
+        """The end-to-end point of the undo: apply_feedback must stop
+        overriding once the correction is forgotten."""
+        store.record("bot@shop.com", store.KIND_LEVEL, "urgent", db_path=self.db)
+        email = processed(level=ImportanceLevel.LOW, score=10.0)
+        self.assertEqual(len(apply_feedback([email], db_path=self.db)), 1)
+        self.assertEqual(email.importance_level, ImportanceLevel.URGENT)
+
+        store.clear("bot@shop.com", db_path=self.db)
+
+        untouched = processed(level=ImportanceLevel.LOW, score=10.0)
+        self.assertEqual(apply_feedback([untouched], db_path=self.db), [])
+        self.assertEqual(untouched.importance_level, ImportanceLevel.LOW)

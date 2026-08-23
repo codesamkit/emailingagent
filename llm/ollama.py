@@ -98,6 +98,9 @@ class _Messages:
             "options": {
                 "temperature": temperature,
                 "repeat_penalty": config.OLLAMA_REPEAT_PENALTY,
+                # Explicit, because Ollama's default (4096) is smaller than
+                # what the model supports and it truncates silently.
+                "num_ctx": config.OLLAMA_NUM_CTX,
             },
         }
         if max_tokens:

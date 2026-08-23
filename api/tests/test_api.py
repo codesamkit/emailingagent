@@ -381,6 +381,68 @@ class TestFeedback:
         assert client.post("/api/emails/nope/feedback", json={"level": "low"}).status_code == 404
 
 
+class TestClearFeedback:
+    """Undo. Without it a correction is permanent: priors are per-sender and
+    latest-wins, so one stray click follows every email from that sender."""
+
+    @pytest.fixture(autouse=True)
+    def _stub_rescore(self, monkeypatch):
+        """Clearing re-scores the sender's mail, which is an LLM call per
+        email. The route's job is to clear and then re-score; that it calls
+        the scorer is what is asserted, not what the scorer returns."""
+        calls = []
+        monkeypatch.setattr(
+            "pipeline.refresh.rescore_sender",
+            lambda sender, db_path=None: calls.append(sender) or len(calls),
+        )
+        self.rescore_calls = calls
+
+    def test_clearing_stops_the_prior_being_applied(self, client):
+        client.post("/api/emails/read-eligible/feedback", json={"level": "low"})
+        assert client.get("/api/emails/unread").json()["importanceLevel"] == "low"
+
+        response = client.delete("/api/emails/read-eligible/feedback")
+
+        assert response.status_code == 200
+        assert response.json()["removed"] == 1
+        assert self.rescore_calls  # the overwritten level has to be recomputed
+
+        from feedback import store as feedback_store
+
+        assert feedback_store.sender_priors(main.DB_PATH) == {}
+
+    def test_can_clear_one_kind_and_keep_the_other(self, client):
+        client.post("/api/emails/read-eligible/feedback", json={"level": "low"})
+        client.post("/api/emails/read-eligible/feedback", json={"isNoReply": True})
+
+        response = client.delete("/api/emails/read-eligible/feedback?kind=level")
+
+        assert response.status_code == 200
+        assert response.json()["removed"] == 1
+
+        from feedback import store as feedback_store
+
+        priors = feedback_store.sender_priors(main.DB_PATH)
+        assert list(priors.values()) == [{"is_no_reply": True}]
+
+    def test_clearing_nothing_is_a_success_not_an_error(self, client):
+        """The UI shows the button unconditionally — it cannot know whether a
+        prior exists — so "nothing to forget" must not read as a failure."""
+        response = client.delete("/api/emails/read-eligible/feedback")
+
+        assert response.status_code == 200
+        assert response.json()["removed"] == 0
+        assert not self.rescore_calls  # nothing changed, so nothing to re-score
+
+    def test_rejects_a_garbage_kind(self, client):
+        assert client.delete(
+            "/api/emails/read-eligible/feedback?kind=nonsense"
+        ).status_code == 422
+
+    def test_unknown_id_is_404(self, client):
+        assert client.delete("/api/emails/nope/feedback").status_code == 404
+
+
 class TestIndexPage:
     def test_root_serves_the_review_ui(self, client):
         response = client.get("/")

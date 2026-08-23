@@ -174,6 +174,78 @@ class TestToRawEmail:
         assert set(hints) == {"List-Unsubscribe", "Precedence"}
 
 
+class TestSplitRelayTag:
+    """Mail delivered through a single relay account writes the real
+    correspondent into the front of the subject. Parsing it here is what
+    keeps no-reply detection, VIP scoring and per-sender feedback priors
+    from collapsing onto the one relay address."""
+
+    def test_pulls_the_address_out_and_strips_the_tag(self):
+        addr, subject = parse.split_relay_tag(
+            "[c.duarte@stridecore.com] Q4 roadmap \u2014 we need the dashboard"
+        )
+        assert addr == "c.duarte@stridecore.com"
+        assert subject == "Q4 roadmap \u2014 we need the dashboard"
+
+    def test_preserves_the_reply_chain(self):
+        addr, subject = parse.split_relay_tag(
+            "Re: Re: Re: [m.chen@stridecore.com] SC-500 firmware freeze"
+        )
+        assert addr == "m.chen@stridecore.com"
+        # The Re: depth is a real signal for scoring and the UI; only the
+        # tag is removed.
+        assert subject == "Re: Re: Re: SC-500 firmware freeze"
+
+    def test_leaves_a_non_address_bracket_alone(self):
+        """A ticket id is not a sender. Only the first bracket is consumed,
+        and only when it parses as an address."""
+        addr, subject = parse.split_relay_tag(
+            "[support@stridecore.com] [CS-40218] Escalated to Severity 1"
+        )
+        assert addr == "support@stridecore.com"
+        assert subject == "[CS-40218] Escalated to Severity 1"
+
+    def test_ignores_a_bare_ticket_id(self):
+        assert parse.split_relay_tag("[CS-40218] Escalated") == (
+            None, "[CS-40218] Escalated"
+        )
+
+    def test_ordinary_mail_is_untouched(self):
+        """The no-tag path is the normal case for real mail; it must return
+        the subject byte-for-byte so this costs nothing when it does not
+        apply."""
+        assert parse.split_relay_tag("Security alert") == (None, "Security alert")
+
+    def test_a_tag_only_subject_keeps_the_original(self):
+        addr, subject = parse.split_relay_tag("[a@b.com]")
+        assert addr == "a@b.com"
+        assert subject == "[a@b.com]"
+
+    def test_handles_an_empty_subject(self):
+        assert parse.split_relay_tag("") == (None, "")
+
+
+class TestToRawEmailRelaySender:
+    def test_relayed_sender_replaces_the_envelope_sender(self):
+        payload = dict(fx.PLAIN_ONLY)
+        payload["headers"] = fx.headers(
+            From="Inconspicuous Turtle <relay@gmail.com>",
+            To="me@example.com",
+            Subject="Re: [j.park@stridecore.com] Hongli T1 samples",
+        )
+        email = parse.to_raw_email(fx.message(payload=payload))
+        assert email.sender == "j.park@stridecore.com"
+        assert email.subject == "Re: Hongli T1 samples"
+        # Provenance is kept: the relay is still where the mail came from.
+        assert email.headers["X-Envelope-From"] == "Inconspicuous Turtle <relay@gmail.com>"
+
+    def test_untagged_mail_keeps_the_from_header_and_gains_no_marker(self):
+        email = parse.to_raw_email(fx.message(payload=fx.PLAIN_ONLY))
+        assert email.sender == "Dana Reed <dana@example.com>"
+        assert email.subject == "Lunch Thursday?"
+        assert "X-Envelope-From" not in email.headers
+
+
 class TestPlainPartsThatArentPlain:
     """Regressions from real inbox data.
 

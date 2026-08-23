@@ -117,6 +117,74 @@ def to_processed(raw: RawEmail) -> ProcessedEmail:
     )
 
 
+def _score_with_signals(score: Callable) -> Callable:
+    """Adapt `score_importance(email, is_no_reply, ...)` to the stage shape,
+    supplying the two signals that are opt-in at the function level.
+
+    scoring/signals.py leaves `vip_senders` empty and `account_owner` None by
+    default so the module stays DB- and auth-free (the B6 containment). The
+    cost of nothing ever passing them was that two of the five within-band
+    signals were dead constants: is_vip was False for every email ever
+    scored, and is_direct True for every email ever scored. A pipeline run is
+    the right place to resolve them — once, not per email.
+
+    Both resolve to their previous defaults on failure, so a fresh install
+    with no context graph and no Gmail auth scores exactly as it did before.
+    """
+    from scoring.signals import DEFAULT_VIP_SENDERS, compute_vip_senders, resolve_account_owner
+
+    try:
+        vip_senders = compute_vip_senders()
+    except Exception as exc:
+        log.debug("VIP senders unavailable: %s", exc)
+        vip_senders = DEFAULT_VIP_SENDERS
+    try:
+        account_owner = resolve_account_owner()
+    except Exception as exc:
+        log.debug("account owner unavailable: %s", exc)
+        account_owner = None
+
+    def run(raw: RawEmail, is_no_reply: bool):
+        return score(
+            raw, is_no_reply, account_owner=account_owner, vip_senders=vip_senders
+        )
+
+    return run
+
+
+def _summarize_with_context(summarize: Callable) -> Callable:
+    """Adapt `summarize(email, context=...)` to the single-argument shape the
+    orchestrator's stage callables use.
+
+    summarize() has accepted a ContextPack since B5, but nothing ever passed
+    one — so every summary was written with no knowledge of the thread it
+    sits in. The pack is built here, at the wiring site, rather than inside
+    process_one: stage callables take exactly one argument (the frozen
+    contract in interfaces/README.md, and what every injected test double
+    expects), and the orchestrator is not supposed to know how a stage is
+    implemented.
+
+    Retrieval failure costs the context, not the summary — an unconsolidated
+    graph or a fresh install just yields the previous, context-free behavior.
+    """
+
+    def run(raw: RawEmail):
+        context = None
+        try:
+            from retrieval.pack import build_pack
+            from summarization.summarize import SUMMARY_CONTEXT_BUDGET_CHARS
+
+            context = build_pack(
+                anchor_email_id=raw.email_id,
+                budget_chars=SUMMARY_CONTEXT_BUDGET_CHARS,
+            ) or None
+        except Exception as exc:
+            log.debug("context pack unavailable for %s: %s", raw.email_id, exc)
+        return summarize(raw, context=context)
+
+    return run
+
+
 class Pipeline:
     """Sequences the per-email stages.
 
@@ -197,8 +265,8 @@ class Pipeline:
         return cls(
             **context_kwargs,
             classify=is_no_reply,
-            score=score_importance,
-            summarize=summarize_one,
+            score=_score_with_signals(score_importance),
+            summarize=_summarize_with_context(summarize_one),
             action_items=extract_action_items,
             categorize=categorize_topic,
             scheduling_gate=is_scheduling_related,

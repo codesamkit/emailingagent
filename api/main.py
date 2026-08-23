@@ -227,6 +227,47 @@ def edit_outline(
     return email_to_json(persist.get(email_id, DB_PATH), include_calendar=True)
 
 
+@app.delete("/api/emails/{email_id}/feedback", dependencies=[Depends(require_token)])
+def clear_feedback(email_id: str, kind: Optional[str] = None) -> Dict[str, Any]:
+    """Forget the corrections recorded for this email's sender.
+
+    The counterpart to give_feedback. Because a prior overwrites the model's
+    level in place, forgetting one cannot restore the old value — the sender's
+    emails are re-scored instead, which is why this is scoped to a single
+    sender rather than offering a global reset.
+
+    `kind` optionally limits the clear to 'level' or 'no_reply'.
+    """
+    email = persist.get(email_id, DB_PATH)
+    if email is None:
+        raise HTTPException(status_code=404, detail="No processed email {0!r}".format(email_id))
+
+    from feedback import store as feedback_store
+    from feedback.apply import apply_feedback
+    from pipeline.refresh import apply_score_spread, rescore_sender
+
+    try:
+        removed = feedback_store.clear(email.sender, kind, db_path=DB_PATH)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+    rescored = 0
+    if removed:
+        rescored = rescore_sender(email.sender, DB_PATH)
+        # Any prior still standing for this sender (say, only 'level' was
+        # cleared) must be re-applied on top of the fresh scores.
+        changed = apply_feedback(persist.all_processed(DB_PATH), db_path=DB_PATH)
+        if changed:
+            persist.upsert(changed, DB_PATH)
+        apply_score_spread(DB_PATH)
+
+    return {
+        "email": email_to_json(persist.get(email_id, DB_PATH), include_calendar=True),
+        "removed": removed,
+        "rescored": rescored,
+    }
+
+
 @app.post("/api/emails/{email_id}/feedback", dependencies=[Depends(require_token)])
 def give_feedback(
     email_id: str,

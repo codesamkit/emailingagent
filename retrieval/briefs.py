@@ -32,9 +32,16 @@ SYSTEM_PROMPT = (
     "open, never a vague placeholder item."
 )
 
+MAX_OPEN_ITEMS = 8
+
 # Field order is load-bearing (see scoring/score.py:92, classification/
 # categorize.py:57) — reason first so it informs headline/body_md instead of
 # rationalizing them after the fact. maxLength on every string.
+#
+# No `maxItems` on open_items: the structured-output validator rejects it
+# ("For 'array' type, property 'maxItems' is not supported") and fails the
+# whole request, which is why no brief was ever generated against a hosted
+# model. The bound is applied to the parsed result instead.
 RESPONSE_SCHEMA = {
     "type": "object",
     "properties": {
@@ -44,7 +51,6 @@ RESPONSE_SCHEMA = {
         "open_items": {
             "type": "array",
             "items": {"type": "string", "maxLength": 200},
-            "maxItems": 8,
         },
     },
     "required": ["reason", "headline", "body_md", "open_items"],
@@ -88,9 +94,10 @@ def rebuild_dirty(
 
     Two cost gates, checked in this order: skip nodes with fewer than
     MIN_EVIDENCE_EMAILS emails (a single-email brief says nothing the
-    summary didn't), then skip when evidence_hash is unchanged — that's the
-    whole point of storing it, zero model calls on a no-op re-run. Returns
-    the number of briefs actually (re)generated.
+    summary didn't), then skip when evidence_hash is unchanged AND the row
+    actually holds a generated brief — that's the whole point of storing the
+    hash, zero model calls on a no-op re-run. Returns the number of briefs
+    actually (re)generated.
     """
     rebuilt = 0
     for node_type, node_id in _candidate_nodes(db_path):
@@ -101,12 +108,30 @@ def rebuild_dirty(
             continue
         current_hash = _evidence_hash(evidence_email_ids, db_path)
         existing = get_brief(node_type, node_id, db_path=db_path)
-        if existing is not None and existing.evidence_hash == current_hash:
+        if (
+            existing is not None
+            and existing.evidence_hash == current_hash
+            and _is_generated(existing)
+        ):
             continue
         brief = _generate(node_type, node_id, evidence_email_ids, db_path, client=client)
         _upsert_brief(brief, current_hash, db_path)
         rebuilt += 1
     return rebuilt
+
+
+def _is_generated(brief: Brief) -> bool:
+    """Whether a row holds a real brief or just a placeholder.
+
+    A node_brief row can be written by two different paths: this module's
+    _upsert_brief (which always stamps generated_at), and context.store.
+    upsert_briefs during a graph build, which can persist an empty shell that
+    still carries an evidence_hash. Matching on the hash alone treated those
+    shells as fresh, so every one of them was skipped forever and the brief
+    layer stayed permanently empty. generated_at is the honest signal; the
+    body check covers a row stamped but written empty.
+    """
+    return brief.generated_at is not None and bool((brief.body_md or "").strip())
 
 
 def _candidate_nodes(db_path: Optional[Path]) -> List[tuple]:
@@ -208,7 +233,11 @@ def _generate(
 
     response = client.messages.create(
         model=_default_model(),
-        max_tokens=800,
+        # Thinking is on by default on the current models and comes out of
+        # this budget: at 800 the model reasoned about the evidence and then
+        # ran out mid-JSON, so the brief failed to parse rather than failing
+        # loudly.
+        max_tokens=2048,
         system=SYSTEM_PROMPT,
         messages=[
             {
@@ -216,7 +245,13 @@ def _generate(
                 "content": _build_user_message(node_type, node_id, evidence_email_ids, db_path),
             }
         ],
-        output_config={"format": {"type": "json_schema", "schema": RESPONSE_SCHEMA}},
+        output_config={
+            "format": {"type": "json_schema", "schema": RESPONSE_SCHEMA},
+            # Condensing a dozen already-summarized emails into a state
+            # document is mechanical; this runs once per node across the whole
+            # corpus, so the depth is not worth the latency.
+            "effort": "low",
+        },
     )
     text = next(block.text for block in response.content if block.type == "text")
     data = json.loads(text)
@@ -226,7 +261,7 @@ def _generate(
         node_id=node_id,
         headline=str(data["headline"]),
         body_md=str(data["body_md"]),
-        open_items=[str(item) for item in (data.get("open_items") or [])],
+        open_items=[str(item) for item in (data.get("open_items") or [])][:MAX_OPEN_ITEMS],
         evidence_email_ids=list(evidence_email_ids),
     )
 

@@ -196,6 +196,7 @@ def render_sheet(data: Dict[str, Any], specs: List[Dict[str, Any]], results: Dic
         "drafting": "Reply generation with the right register",
         "trap": "False premises, spam, and unanswerable questions",
         "consistency": "Same fact, asked twice, same answer",
+        "temporal": "Ordering and supersession across the two acts",
     }
     for tier, group in by_tier.items():
         head.append("| {0} | {1} | {2} |".format(tier, len(group), descriptions.get(tier, "")))

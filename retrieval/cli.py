@@ -4,6 +4,7 @@
     python -m retrieval.cli pack --email <email_id>     # the ContextPack an outline/summary would get
     python -m retrieval.cli brief case <entity_id>      # a stored rollup brief
     python -m retrieval.cli brief thread <thread_id>
+    python -m retrieval.cli rebuild                     # (re)generate stale/missing briefs
 
 `pack --email` is the one to reach for when an outline comes out generic —
 it shows whether the context was empty, or present and the model ignored it.
@@ -110,6 +111,29 @@ def cmd_brief(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_rebuild(args: argparse.Namespace) -> int:
+    """Generate the briefs that are missing or whose evidence moved.
+
+    rebuild_dirty already owns the decision of what needs regenerating -- this
+    only reports it. Every brief is one model call, so --limit exists to price
+    a run before committing to the whole corpus, and the stage is worth
+    routing explicitly (LLM_PROVIDER_BRIEF=anthropic) since a rollup over a
+    dozen emails is exactly where a small local model produces mush.
+    """
+    db_path = _db(args)
+    from llm.client import model_for
+    from llm.config import provider_for
+
+    print(
+        "Rebuilding briefs via {0}/{1} (limit={2})...".format(
+            provider_for("brief"), model_for("brief"), args.limit or "none"
+        )
+    )
+    count = briefs.rebuild_dirty(db_path, limit=args.limit)
+    print("Generated {0} brief(s).".format(count))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m retrieval.cli",
@@ -132,6 +156,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--query", default=None, help="optional query alongside/instead of an anchor")
     p.add_argument("--budget", type=int, default=6000, help="budget_chars")
     p.set_defaults(func=cmd_pack)
+
+    r = sub.add_parser(
+        "rebuild", parents=[common], help="(re)generate missing or stale rollup briefs"
+    )
+    r.add_argument(
+        "--limit", type=int, default=None, help="stop after this many briefs (cost control)"
+    )
+    r.set_defaults(func=cmd_rebuild)
 
     b = sub.add_parser("brief", parents=[common], help="print a stored rollup brief")
     b.add_argument("node_type", choices=["thread", "case", "project", "person"])

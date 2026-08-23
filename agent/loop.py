@@ -33,6 +33,19 @@ SYSTEM_PROMPT = (
     "specific email. Never claim to have sent anything — you cannot send "
     "email. When asked to draft a reply, call draft_reply and return the "
     "draft for the user to review, not as something already sent."
+    "\n\n"
+    "Answer briefly by default. Lead with the answer itself, and prefer a "
+    "few tight bullets over prose. Cover only what was asked — do not add "
+    "background, caveats, or adjacent findings the user did not ask for. "
+    "When a question spans many items, give the headline for each rather "
+    "than a full write-up, and offer to go deeper on any one of them. "
+    "Expand only when the user asks for detail."
+    "\n\n"
+    "Prefer get_entity_brief and get_thread_brief over re-reading the "
+    "underlying emails: a brief is a standing rollup and is both cheaper "
+    "and more current than reconstructing the same picture from scratch. "
+    "Reach for search_context or get_email when no brief exists, when the "
+    "brief is missing something specific, or when you need to quote."
 )
 
 
@@ -77,6 +90,52 @@ def _block_to_dict(block: Any) -> Dict[str, Any]:
     # dropping fields is exactly what makes a block unreplayable.
     dump = getattr(block, "model_dump", None)
     return dump(exclude_none=True) if callable(dump) else {"type": block.type}
+
+
+def _separated(event: Event, already_emitted: bool) -> Event:
+    """Open a turn's first text with a blank line once anything has been said.
+
+    `already_emitted` means "text has been sent AND this is the first delta of
+    a new turn" -- deltas mid-turn must pass through untouched or the answer
+    gets a blank line between every token.
+
+    The caller concatenates deltas into one document, so a turn that says
+    "I'll look that up." followed by a turn opening "## Projects" ran together
+    as "...look that up.## Projects" -- the heading no longer starts a line
+    and renders as literal text. Only the first delta of a later turn needs
+    it; deltas within a turn already carry their own whitespace.
+    """
+    if not already_emitted or not event.text or event.text.startswith("\n"):
+        return event
+    return Event(type=event.type, text="\n\n" + event.text)
+
+
+def _stream_turn(client: Any, kwargs: Dict[str, Any]) -> Iterator[Any]:
+    """One model turn, yielding Event text deltas as they generate and then
+    the finished message object last.
+
+    Streaming is what makes the agent feel responsive: a turn that writes a
+    long answer took its full generation time before a single character
+    reached the caller. The token deltas are the same text either way.
+
+    Falls back to a plain create() when the client has no .stream — the
+    Ollama client and the fakes in agent/tests both take that path.
+    """
+    stream = getattr(client.messages, "stream", None)
+    if stream is None:
+        yield client.messages.create(**kwargs)
+        return
+
+    with stream(**kwargs) as active:
+        for event in active:
+            # The SDK synthesizes a "text" event per delta; every other event
+            # (thinking, tool-input json, block start/stop) is reconstructed
+            # from the final message, so only text needs forwarding.
+            if getattr(event, "type", None) == "text":
+                text = getattr(event, "text", "")
+                if text:
+                    yield Event(type="text_delta", text=text)
+        yield active.get_final_message()
 
 
 def _dispatch_all(
@@ -143,9 +202,11 @@ def run(
 
     conversation = list(messages)
     new_messages: List[Dict[str, Any]] = []
+    # Whether any assistant text has reached the caller yet -- see _separated.
+    emitted_text = False
 
     for _turn in range(max_turns):
-        response = client.messages.create(
+        turn_kwargs = dict(
             model=model,
             # Thinking is on by default on the current models and its
             # tokens count against this budget, so a multi-tool turn needs
@@ -162,14 +223,31 @@ def run(
             cache_control={"type": "ephemeral"},
         )
 
+        streamed = False
+        first_of_turn = True
+        for item in _stream_turn(client, turn_kwargs):
+            if isinstance(item, Event):
+                streamed = True
+                yield _separated(item, emitted_text and first_of_turn)
+                first_of_turn = False
+                emitted_text = True
+            else:
+                response = item
+
         assistant_blocks = [_block_to_dict(b) for b in response.content]
         assistant_message = {"role": "assistant", "content": assistant_blocks}
         conversation.append(assistant_message)
         new_messages.append(assistant_message)
 
-        for block in assistant_blocks:
-            if block["type"] == "text" and block["text"]:
-                yield Event(type="text_delta", text=block["text"])
+        # Already emitted token-by-token while the turn was generating; re-
+        # emitting the finished blocks here would duplicate the whole answer.
+        if not streamed:
+            for block in assistant_blocks:
+                if block["type"] == "text" and block["text"]:
+                    yield _separated(
+                        Event(type="text_delta", text=block["text"]), emitted_text
+                    )
+                    emitted_text = True
 
         stop_reason = getattr(response, "stop_reason", None)
         if stop_reason != "tool_use":
@@ -216,7 +294,7 @@ def run(
         # a dozen tool calls. One more call with tool_choice "none" forces it
         # to answer from what it already gathered instead of asking for more.
         log.info("agent.loop.run hit max_turns=%s; forcing a final answer", max_turns)
-        response = client.messages.create(
+        final_kwargs = dict(
             model=model,
             max_tokens=1536,
             system=SYSTEM_PROMPT,
@@ -225,11 +303,26 @@ def run(
             tool_choice={"type": "none"},
             cache_control={"type": "ephemeral"},
         )
+        streamed = False
+        first_of_turn = True
+        for item in _stream_turn(client, final_kwargs):
+            if isinstance(item, Event):
+                streamed = True
+                yield _separated(item, emitted_text and first_of_turn)
+                first_of_turn = False
+                emitted_text = True
+            else:
+                response = item
+
         assistant_blocks = [_block_to_dict(b) for b in response.content]
         assistant_message = {"role": "assistant", "content": assistant_blocks}
         new_messages.append(assistant_message)
-        for block in assistant_blocks:
-            if block["type"] == "text" and block["text"]:
-                yield Event(type="text_delta", text=block["text"])
+        if not streamed:
+            for block in assistant_blocks:
+                if block["type"] == "text" and block["text"]:
+                    yield _separated(
+                        Event(type="text_delta", text=block["text"]), emitted_text
+                    )
+                    emitted_text = True
 
     yield Event(type="done", new_messages=new_messages)

@@ -119,6 +119,91 @@ class TestChainOfThree:
         assert len(client.calls) == 4
 
 
+class _FakeTextEvent:
+    type = "text"
+
+    def __init__(self, text):
+        self.text = text
+
+
+class _FakeStream:
+    """Mimics the SDK's stream context manager: iterating yields per-delta
+    text events, and get_final_message returns the assembled message."""
+
+    def __init__(self, chunks, final):
+        self._chunks = chunks
+        self._final = final
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def __iter__(self):
+        for chunk in self._chunks:
+            yield _FakeTextEvent(chunk)
+
+    def get_final_message(self):
+        return self._final
+
+
+def _streaming_client(chunks, final):
+    calls = []
+
+    def stream(**kwargs):
+        calls.append(kwargs)
+        return _FakeStream(chunks, final)
+
+    client = type("Client", (), {})()
+    client.messages = type("Messages", (), {"stream": staticmethod(stream)})()
+    client.calls = calls
+    return client
+
+
+class TestStreaming:
+    def test_text_arrives_as_deltas_and_is_not_repeated(self):
+        """The whole point is text reaching the caller while it generates --
+        and the finished blocks must not then be emitted a second time."""
+        final = _text_response("Hello there, world.")
+        client = _streaming_client(["Hello ", "there, ", "world."], final)
+
+        events = list(loop.run([{"role": "user", "content": "hi"}], client=client))
+        deltas = [e.text for e in events if e.type == "text_delta"]
+
+        assert deltas == ["Hello ", "there, ", "world."]
+        assert "".join(deltas) == "Hello there, world."
+        # Persisted from the final message, so the next turn has full history.
+        assert events[-1].new_messages[-1]["content"][0]["text"] == "Hello there, world."
+
+    def test_a_later_turns_text_starts_on_a_new_line(self, monkeypatch):
+        """The caller concatenates deltas into one document. Without a
+        separator, "I'll look." + "## Projects" became "I'll look.## Projects"
+        and the heading stopped being a heading."""
+        monkeypatch.setattr(tools_module, "dispatch", lambda name, args, **kw: {})
+        client = _scripted_client(
+            [_tool_use_response("list_queue", {}), _text_response("## Projects\n- one")]
+        )
+        events = list(loop.run([{"role": "user", "content": "go"}], client=client))
+        joined = "".join(e.text for e in events if e.type == "text_delta")
+        assert "## Projects" in joined
+        assert joined.startswith("## Projects") or "\n## Projects" in joined
+
+    def test_separator_does_not_break_up_a_single_turn(self):
+        """Only the first delta of a NEW turn gets the blank line -- inserting
+        one between every delta would shred the answer."""
+        final = _text_response("Hello there, world.")
+        client = _streaming_client(["Hello ", "there, ", "world."], final)
+        events = list(loop.run([{"role": "user", "content": "hi"}], client=client))
+        assert "".join(e.text for e in events if e.type == "text_delta") == "Hello there, world."
+
+    def test_falls_back_to_create_when_client_cannot_stream(self):
+        """The Ollama client and older fakes expose only .create."""
+        client = _scripted_client([_text_response("No streaming here.")])
+        events = list(loop.run([{"role": "user", "content": "hi"}], client=client))
+        assert [e.text for e in events if e.type == "text_delta"] == ["No streaming here."]
+
+
 class TestMaxTurns:
     def test_stops_at_max_turns_even_if_still_asking_for_tools(self, monkeypatch):
         monkeypatch.setattr(tools_module, "dispatch", lambda name, args, **kw: {})
