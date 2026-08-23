@@ -89,7 +89,157 @@ CREATE INDEX IF NOT EXISTS ix_processed_received_at ON processed_email (received
 CREATE INDEX IF NOT EXISTS ix_processed_read_status ON processed_email (read_status);
 """
 
-ALL_SCHEMAS: Tuple[str, ...] = (RAW_EMAIL_SCHEMA, PROCESSED_EMAIL_SCHEMA)
+# --- Context graph (PHASES-COMPLEX.md Checkpoint 0) ------------------------
+# Mirrors models/schema.py's Chunk/Entity/Mention/Relation/Brief additions.
+# No FOREIGN KEY constraints, matching raw_email/processed_email above —
+# this DB never enables PRAGMA foreign_keys.
+
+CHUNK_SCHEMA = """
+CREATE TABLE IF NOT EXISTS chunk (
+    chunk_id    TEXT PRIMARY KEY,
+    email_id    TEXT NOT NULL,
+    ord         INTEGER NOT NULL,
+    text        TEXT NOT NULL,
+    kind        TEXT NOT NULL CHECK (kind IN ('body', 'quoted', 'signature'))
+);
+CREATE INDEX IF NOT EXISTS ix_chunk_email ON chunk (email_id);
+"""
+
+# External-content FTS5 index over chunk.text, kept in sync by triggers rather
+# than duplicating the text into the FTS table's own storage. Must be created
+# after CHUNK_SCHEMA — ALL_SCHEMAS below preserves that order.
+CHUNK_FTS_SCHEMA = """
+CREATE VIRTUAL TABLE IF NOT EXISTS chunk_fts USING fts5(
+    text, content='chunk', content_rowid='rowid'
+);
+CREATE TRIGGER IF NOT EXISTS chunk_fts_ai AFTER INSERT ON chunk BEGIN
+    INSERT INTO chunk_fts(rowid, text) VALUES (new.rowid, new.text);
+END;
+CREATE TRIGGER IF NOT EXISTS chunk_fts_ad AFTER DELETE ON chunk BEGIN
+    INSERT INTO chunk_fts(chunk_fts, rowid, text) VALUES('delete', old.rowid, old.text);
+END;
+CREATE TRIGGER IF NOT EXISTS chunk_fts_au AFTER UPDATE ON chunk BEGIN
+    INSERT INTO chunk_fts(chunk_fts, rowid, text) VALUES('delete', old.rowid, old.text);
+    INSERT INTO chunk_fts(rowid, text) VALUES (new.rowid, new.text);
+END;
+"""
+
+CHUNK_VEC_SCHEMA = """
+CREATE TABLE IF NOT EXISTS chunk_vec (
+    chunk_id TEXT PRIMARY KEY,
+    dim      INTEGER NOT NULL,
+    vec      BLOB NOT NULL
+);
+"""
+
+ENTITY_SCHEMA = """
+CREATE TABLE IF NOT EXISTS entity (
+    entity_id      TEXT PRIMARY KEY,
+    kind           TEXT NOT NULL,
+    canonical_name TEXT NOT NULL,
+    normalized_key TEXT NOT NULL,
+    first_seen     TEXT,
+    last_seen      TEXT,
+    mention_count  INTEGER NOT NULL DEFAULT 0,
+    salience       REAL NOT NULL DEFAULT 0.0
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_entity_kind_key ON entity (kind, normalized_key);
+"""
+
+ENTITY_ALIAS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS entity_alias (
+    entity_id        TEXT NOT NULL,
+    alias            TEXT NOT NULL,
+    normalized_alias TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_entity_alias_normalized ON entity_alias (normalized_alias);
+"""
+
+ENTITY_VEC_SCHEMA = """
+CREATE TABLE IF NOT EXISTS entity_vec (
+    entity_id TEXT PRIMARY KEY,
+    vec       BLOB NOT NULL
+);
+"""
+
+MENTION_SCHEMA = """
+CREATE TABLE IF NOT EXISTS mention (
+    mention_id  INTEGER PRIMARY KEY AUTOINCREMENT,
+    entity_id   TEXT NOT NULL,
+    email_id    TEXT NOT NULL,
+    chunk_id    TEXT,
+    span_text   TEXT NOT NULL,
+    confidence  REAL NOT NULL,
+    source      TEXT NOT NULL CHECK (source IN ('header', 'regex', 'llm'))
+);
+CREATE INDEX IF NOT EXISTS ix_mention_email ON mention (email_id);
+CREATE INDEX IF NOT EXISTS ix_mention_entity ON mention (entity_id);
+"""
+
+RELATION_SCHEMA = """
+CREATE TABLE IF NOT EXISTS relation (
+    src_entity_id      TEXT NOT NULL,
+    dst_entity_id      TEXT NOT NULL,
+    rel                TEXT NOT NULL,
+    weight             REAL NOT NULL DEFAULT 0.0,
+    evidence_email_ids TEXT NOT NULL DEFAULT '[]',
+    PRIMARY KEY (src_entity_id, dst_entity_id, rel)
+);
+"""
+
+# Composite key: node_id alone isn't unique across node types (e.g. a thread_id
+# and a case entity_id could collide), so node_type is part of the key.
+NODE_BRIEF_SCHEMA = """
+CREATE TABLE IF NOT EXISTS node_brief (
+    node_type          TEXT NOT NULL,
+    node_id            TEXT NOT NULL,
+    headline           TEXT,
+    body_md            TEXT,
+    open_items         TEXT NOT NULL DEFAULT '[]',
+    evidence_email_ids TEXT NOT NULL DEFAULT '[]',
+    evidence_hash      TEXT,
+    generated_at       TEXT,
+    PRIMARY KEY (node_type, node_id)
+);
+"""
+
+AGENT_CONVERSATION_SCHEMA = """
+CREATE TABLE IF NOT EXISTS agent_conversation (
+    conversation_id TEXT PRIMARY KEY,
+    title           TEXT,
+    created_at      TEXT NOT NULL,
+    updated_at      TEXT NOT NULL
+);
+"""
+
+AGENT_MESSAGE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS agent_message (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    conversation_id TEXT NOT NULL,
+    role            TEXT NOT NULL,
+    content         TEXT NOT NULL,
+    created_at      TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_agent_message_conversation ON agent_message (conversation_id);
+"""
+
+# Order matters: CHUNK_SCHEMA must precede CHUNK_FTS_SCHEMA (its triggers
+# reference the chunk table).
+CONTEXT_SCHEMAS: Tuple[str, ...] = (
+    CHUNK_SCHEMA,
+    CHUNK_FTS_SCHEMA,
+    CHUNK_VEC_SCHEMA,
+    ENTITY_SCHEMA,
+    ENTITY_ALIAS_SCHEMA,
+    ENTITY_VEC_SCHEMA,
+    MENTION_SCHEMA,
+    RELATION_SCHEMA,
+    NODE_BRIEF_SCHEMA,
+    AGENT_CONVERSATION_SCHEMA,
+    AGENT_MESSAGE_SCHEMA,
+)
+
+ALL_SCHEMAS: Tuple[str, ...] = (RAW_EMAIL_SCHEMA, PROCESSED_EMAIL_SCHEMA) + CONTEXT_SCHEMAS
 
 # Columns added after a table first shipped: {table: ((column, DDL), ...)}.
 # Applied on every open so a database written by an earlier version keeps
@@ -111,6 +261,10 @@ MIGRATIONS: Dict[str, Sequence[Tuple[str, str]]] = {
             "proposed_event_status",
             "ALTER TABLE processed_email ADD COLUMN proposed_event_status "
             "TEXT NOT NULL DEFAULT 'none'",
+        ),
+        (
+            "context_processed_at",
+            "ALTER TABLE processed_email ADD COLUMN context_processed_at TEXT",
         ),
     ),
 }

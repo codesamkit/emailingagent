@@ -34,8 +34,8 @@ INSERT INTO processed_email (
     importance_score, importance_level, importance_justification,
     summary, category, is_scheduling_related, calendar_context,
     proposed_event, proposed_event_status,
-    reply_outline, reply_outline_status, processed_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    reply_outline, reply_outline_status, processed_at, context_processed_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(email_id) DO UPDATE SET
     thread_id                = excluded.thread_id,
     sender                   = excluded.sender,
@@ -55,7 +55,8 @@ ON CONFLICT(email_id) DO UPDATE SET
     proposed_event_status    = excluded.proposed_event_status,
     reply_outline            = excluded.reply_outline,
     reply_outline_status     = excluded.reply_outline_status,
-    processed_at             = excluded.processed_at
+    processed_at             = excluded.processed_at,
+    context_processed_at     = excluded.context_processed_at
 """
 
 
@@ -193,6 +194,7 @@ def _to_row(email: ProcessedEmail, processed_at: Optional[datetime]) -> tuple:
         json.dumps(email.reply_outline) if email.reply_outline is not None else None,
         ReplyOutlineStatus(email.reply_outline_status).value,
         _dt(processed_at if processed_at is not None else email.processed_at),
+        _dt(email.context_processed_at),
     )
 
 
@@ -225,6 +227,11 @@ def _row_to_email(row: sqlite3.Row) -> ProcessedEmail:
         reply_outline_status=ReplyOutlineStatus(row["reply_outline_status"]),
         processed_at=(
             datetime.fromisoformat(row["processed_at"]) if row["processed_at"] else None
+        ),
+        context_processed_at=(
+            datetime.fromisoformat(row["context_processed_at"])
+            if row["context_processed_at"]
+            else None
         ),
     )
 

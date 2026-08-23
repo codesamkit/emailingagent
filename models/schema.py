@@ -170,3 +170,127 @@ class ProcessedEmail:
     # Pipeline bookkeeping (pipeline/orchestrate.py) — set each time this
     # record is (re)processed; supports incremental re-run and debugging.
     processed_at: Optional[datetime] = None
+
+    # Set once the context-graph pass (chunk/embed/extract, PHASES-COMPLEX.md
+    # Checkpoint 0) has completed for this email. Chunks/vectors/mentions
+    # themselves live in separate tables (models/db.py), not on this record —
+    # this is only a completion marker so pipeline/incremental.py can tell
+    # "context pass already ran" from "still due", the same way `processed_at`
+    # does for the reasoning pass.
+    context_processed_at: Optional[datetime] = None
+
+
+# --- Context graph (PHASES-COMPLEX.md Checkpoint 0) -------------------------
+# Appended, not part of the original frozen contract above. Same rule applies
+# going forward: append only, flag Track A/B/C before changing a shape here.
+
+
+class EntityKind(str, Enum):
+    PERSON = "person"
+    ORG = "org"
+    CASE = "case"                   # the CRM-shaped thing — ticket / case / incident
+    PROJECT = "project"
+    DELIVERABLE = "deliverable"
+    DOCUMENT = "document"
+    TOPIC = "topic"
+
+
+class ChunkKind(str, Enum):
+    BODY = "body"
+    QUOTED = "quoted"
+    SIGNATURE = "signature"
+
+
+class MentionSource(str, Enum):
+    HEADER = "header"
+    REGEX = "regex"
+    LLM = "llm"
+
+
+@dataclass
+class Chunk:
+    """One piece of an email's body text, post quote-stripping (context/chunk.py).
+    QUOTED and SIGNATURE chunks are stored but excluded from embedding/extraction."""
+
+    chunk_id: str
+    email_id: str
+    ord: int
+    text: str
+    kind: ChunkKind
+
+
+@dataclass
+class Entity:
+    """A resolved node in the context graph (context/resolve.py)."""
+
+    entity_id: str
+    kind: EntityKind
+    canonical_name: str
+    normalized_key: str
+    first_seen: datetime
+    last_seen: datetime
+    aliases: list[str] = field(default_factory=list)
+    mention_count: int = 0
+    salience: float = 0.0
+
+
+@dataclass
+class Mention:
+    """One occurrence of an entity in one email (context/extract.py)."""
+
+    email_id: str
+    entity_id: str
+    span_text: str
+    confidence: float
+    source: MentionSource
+    chunk_id: Optional[str] = None
+
+
+@dataclass
+class Relation:
+    """An edge between two entities (context/consolidate.py). `rel` is one of:
+    belongs_to, participant_in, mentions, owner_of."""
+
+    src_entity_id: str
+    dst_entity_id: str
+    rel: str
+    weight: float = 0.0
+    evidence_email_ids: list[str] = field(default_factory=list)
+
+
+@dataclass
+class Brief:
+    """A cached, LLM-written state document for a thread/case/project/person
+    (retrieval/briefs.py). node_type is one of: thread, case, project, person."""
+
+    node_type: str
+    node_id: str
+    headline: str
+    body_md: str
+    open_items: list[str] = field(default_factory=list)
+    evidence_email_ids: list[str] = field(default_factory=list)
+    evidence_hash: Optional[str] = None
+    generated_at: datetime = field(
+        default_factory=lambda: datetime.now(timezone.utc)
+    )
+
+
+@dataclass
+class ContextSection:
+    """One labeled, provenance-tagged section of a ContextPack."""
+
+    label: str
+    text: str
+    source_email_ids: list[str] = field(default_factory=list)
+    score: float = 0.0
+
+
+@dataclass
+class ContextPack:
+    """The single context-assembly output (retrieval/pack.py:build_pack),
+    consumed by outline.py, summarize.py, and agent/loop.py."""
+
+    query: Optional[str] = None
+    anchor_email_id: Optional[str] = None
+    sections: list[ContextSection] = field(default_factory=list)
+    total_chars: int = 0

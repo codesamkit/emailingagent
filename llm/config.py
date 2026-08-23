@@ -15,8 +15,21 @@ ANTHROPIC = "anthropic"
 OLLAMA = "ollama"
 PROVIDERS = (ANTHROPIC, OLLAMA)
 
-# The stages that can be routed independently. Names match pipeline STAGES.
-ROUTABLE_STAGES = ("classify", "score", "summarize", "categorize", "outline")
+# The stages that can be routed independently. Names match pipeline STAGES /
+# CONTEXT_STAGES. "extract"/"brief"/"agent" added for the context-graph layer
+# (PHASES-COMPLEX.md) — provider_for/model_for don't validate against this
+# tuple, so it's for discoverability (e.g. a CLI that lists routable stages),
+# not a functional gate.
+ROUTABLE_STAGES = (
+    "classify",
+    "score",
+    "summarize",
+    "categorize",
+    "outline",
+    "extract",
+    "brief",
+    "agent",
+)
 
 
 def _clean(value: Optional[str]) -> Optional[str]:

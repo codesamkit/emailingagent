@@ -16,7 +16,7 @@ from models.schema import (
     ReplyOutlineStatus,
 )
 from pipeline import incremental
-from pipeline.orchestrate import STAGES
+from pipeline.orchestrate import ALL_STAGE_NAMES
 
 UTC = timezone.utc
 NOW = datetime(2026, 8, 24, 12, tzinfo=UTC)
@@ -44,6 +44,7 @@ def complete(email_id="e1", read_status=ReadStatus.UNREAD, **overrides) -> Proce
         reply_outline=None,
         reply_outline_status=ReplyOutlineStatus.NONE,
         processed_at=NOW,
+        context_processed_at=NOW,
     )
     defaults.update(overrides)
     return ProcessedEmail(**defaults)
@@ -74,10 +75,12 @@ class TestNothingToDo:
 
 class TestFirstRun:
     def test_never_processed_runs_every_stage(self):
-        assert incremental.stages_for(raw(), None) == tuple(STAGES)
+        assert incremental.stages_for(raw(), None) == tuple(ALL_STAGE_NAMES)
 
     def test_processed_at_none_runs_every_stage(self):
-        assert incremental.stages_for(raw(), complete(processed_at=None)) == tuple(STAGES)
+        assert incremental.stages_for(
+            raw(), complete(processed_at=None)
+        ) == tuple(ALL_STAGE_NAMES)
 
 
 class TestReadStatusFlip:

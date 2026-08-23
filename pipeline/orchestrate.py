@@ -45,6 +45,16 @@ STAGES: Sequence[str] = (
     "outline",
 )
 
+# Context-graph stages (PHASES-COMPLEX.md Checkpoint 0). These run in a
+# corpus-wide pass BEFORE any STAGES stage, for any email — an outline built
+# on email #1 must not run until the graph has seen email #160, or it can't
+# see facts that live in later messages. Person A's context/chunk.py,
+# context/extract.py, and llm/embeddings.py implement the callables; the
+# actual two-pass driver loop (context pass -> consolidate -> reasoning pass)
+# is wired at integration (PHASES-COMPLEX.md INT1), not here.
+CONTEXT_STAGES: Sequence[str] = ("chunk", "embed", "extract")
+ALL_STAGE_NAMES: Sequence[str] = tuple(CONTEXT_STAGES) + tuple(STAGES)
+
 # Once a proposed event has been acted on, a re-run must never regenerate or
 # overwrite it — APPROVED may already carry a live google_event_id, and
 # DECLINED is a recorded user decision, not a value the pipeline owns.
@@ -86,6 +96,9 @@ class Pipeline:
         calendar_context: Optional[Callable] = None,
         propose_event: Optional[Callable] = None,
         outline: Optional[Callable] = None,
+        chunk: Optional[Callable] = None,
+        embed: Optional[Callable] = None,
+        extract: Optional[Callable] = None,
         stages: Optional[Sequence[str]] = None,
         calendar_window_days: int = 7,
     ):
@@ -97,6 +110,9 @@ class Pipeline:
         self._calendar_context = calendar_context
         self._propose_event = propose_event
         self._outline = outline
+        self._chunk = chunk
+        self._embed = embed
+        self._extract = extract
         self.stages = tuple(stages if stages is not None else STAGES)
         self.calendar_window_days = calendar_window_days
         self.errors: List[str] = []
@@ -120,6 +136,29 @@ class Pipeline:
         from scoring.score import score_importance
         from summarization.summarize import summarize as summarize_one
 
+        # Context-graph stages: Person A's track (context/chunk.py,
+        # context/extract.py, llm/embeddings.py) doesn't exist in this repo
+        # yet. Unlike the imports above, these are guarded — importing them
+        # unconditionally would make with_defaults() raise ImportError for
+        # every caller (pipeline/refresh.py's refresh() and
+        # process_incremental()), breaking the 8 stages that already work
+        # today, just because 3 unrelated stages aren't built yet. Once that
+        # track lands, these resolve normally with no code change here; until
+        # then the callable stays None and _run_stage no-ops on it, same as
+        # any other disabled stage.
+        try:
+            from context.chunk import chunk_email
+        except ImportError:
+            chunk_email = None
+        try:
+            from llm.embeddings import embed_texts
+        except ImportError:
+            embed_texts = None
+        try:
+            from context.extract import extract_entities
+        except ImportError:
+            extract_entities = None
+
         return cls(
             classify=is_no_reply,
             score=score_importance,
@@ -129,6 +168,9 @@ class Pipeline:
             calendar_context=get_calendar_context,
             propose_event=extract_proposed_event,
             outline=generate_reply_outline,
+            chunk=chunk_email,
+            embed=embed_texts,
+            extract=extract_entities,
             stages=stages,
             **kwargs,
         )

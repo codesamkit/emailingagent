@@ -6,6 +6,11 @@ google-auth-httplib2>=0.1.1
 # Classification / scoring / summarization / drafting (Tracks B and C)
 anthropic>=0.125.0
 
+# Context graph — chunking/embeddings/retrieval (Tracks A and B)
+numpy>=1.24
+requests>=2.31    # llm/ollama.py already imports this directly; was only
+                  # arriving transitively via google-auth-httplib2 before
+
 # API layer
 fastapi>=0.128.0
 uvicorn[standard]>=0.39.0

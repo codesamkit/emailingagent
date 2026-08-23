@@ -16,15 +16,24 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 from models.schema import ProcessedEmail, ProposedEventStatus, RawEmail, ReadStatus
 
-from .orchestrate import STAGES
+from .orchestrate import ALL_STAGE_NAMES
 
 # Which stage fills which field. A stage is due when its field is still unset.
+# The three context-graph stages share one completion marker
+# (context_processed_at) rather than one field each — they only ever run
+# together, as one per-email context pass (chunk -> embed -> extract), not
+# independently, so "any of them due" and "all of them due" are the same
+# question. A read-status flip must NOT mark these due — see the read_flipped
+# branch below, which only ever appends "outline".
 _STAGE_OUTPUT = {
     "classify": "is_no_reply",
     "score": "importance_score",
     "summarize": "summary",
     "categorize": "category",
     "scheduling": "is_scheduling_related",
+    "chunk": "context_processed_at",
+    "embed": "context_processed_at",
+    "extract": "context_processed_at",
 }
 
 
@@ -38,7 +47,7 @@ def stages_for(
     the email entirely, making a no-op re-run cost zero LLM calls.
     """
     if existing is None or existing.processed_at is None:
-        return tuple(STAGES)
+        return tuple(ALL_STAGE_NAMES)
 
     due: List[str] = [
         stage
@@ -66,8 +75,10 @@ def stages_for(
     ):
         due.append("propose_event")
 
-    # Preserve canonical stage order; the pipeline depends on it.
-    return tuple(stage for stage in STAGES if stage in set(due))
+    # Preserve canonical stage order; the pipeline depends on it. Context
+    # stages sort first (ALL_STAGE_NAMES = CONTEXT_STAGES + STAGES) since the
+    # graph must be populated before any reasoning-pass stage runs.
+    return tuple(stage for stage in ALL_STAGE_NAMES if stage in set(due))
 
 
 def _outline_missing(existing: ProcessedEmail) -> bool:
@@ -105,6 +116,8 @@ def summarize_plan(plan_map: Dict[str, Tuple[str, ...]], total: int) -> str:
         for stage in stages:
             counts[stage] = counts.get(stage, 0) + 1
     detail = ", ".join(
-        "{0}x{1}".format(stage, counts[stage]) for stage in STAGES if stage in counts
+        "{0}x{1}".format(stage, counts[stage])
+        for stage in ALL_STAGE_NAMES
+        if stage in counts
     )
     return "{0}/{1} emails need work ({2})".format(len(plan_map), total, detail)
