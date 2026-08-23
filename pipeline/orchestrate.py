@@ -59,6 +59,7 @@ STAGES: Sequence[str] = (
     "classify",
     "score",
     "summarize",
+    "action_items",
     "categorize",
     "scheduling",
     "calendar",
@@ -130,6 +131,7 @@ class Pipeline:
         classify: Optional[Callable] = None,
         score: Optional[Callable] = None,
         summarize: Optional[Callable] = None,
+        action_items: Optional[Callable] = None,
         categorize: Optional[Callable] = None,
         scheduling_gate: Optional[Callable] = None,
         calendar_context: Optional[Callable] = None,
@@ -147,6 +149,7 @@ class Pipeline:
         self._classify = classify
         self._score = score
         self._summarize = summarize
+        self._action_items = action_items
         self._categorize = categorize
         self._scheduling_gate = scheduling_gate
         self._calendar_context = calendar_context
@@ -173,6 +176,7 @@ class Pipeline:
         from classification.classify import is_no_reply
         from drafting.outline import generate_reply_outline
         from scoring.score import score_importance
+        from summarization.action_items import extract_action_items
         from summarization.summarize import summarize as summarize_one
 
         # The context-pass imports are gated on the stage list, not just
@@ -189,6 +193,7 @@ class Pipeline:
             classify=is_no_reply,
             score=score_importance,
             summarize=summarize_one,
+            action_items=extract_action_items,
             categorize=categorize_topic,
             scheduling_gate=is_scheduling_related,
             calendar_context=get_calendar_context,
@@ -303,6 +308,10 @@ class Pipeline:
         summarized = self._run_stage("summarize", raw.email_id, self._summarize, raw)
         if summarized is not None:
             record.summary, record.mentioned_dates = summarized
+
+        items = self._run_stage("action_items", raw.email_id, self._action_items, raw)
+        if items is not None:
+            record.action_items = items
 
         topic = self._run_stage("categorize", raw.email_id, self._categorize, raw)
         if topic is not None:

@@ -1,10 +1,32 @@
-import { EmailItem, FilterOptions, InboxStats } from '../types/email';
+import { EmailItem, FilterOptions, InboxStats, TodoItem } from '../types/email';
 import { MOCK_EMAILS } from './mockData';
 
 const BASE_URL = '/api';
 
 // In-memory store for mutations when in mock mode or fallback
 let localEmails = [...MOCK_EMAILS];
+
+// Mock-mode to-do list: derived once from MOCK_EMAILS (needs-reply only —
+// mock data has no LLM-extracted action items), then mutated locally as
+// items are completed, mirroring how localEmails works above.
+function deriveMockTodos(): TodoItem[] {
+  return localEmails
+    .filter(e => e.isNoReply === false && e.replyOutlineStatus !== 'sent')
+    .map(e => ({
+      todoId: `needs-reply-${e.emailId}`,
+      emailId: e.emailId,
+      threadId: e.threadId,
+      kind: 'needs_reply' as const,
+      text: `Reply to "${e.subject || '(no subject)'}"`,
+      createdAt: e.receivedAt,
+      subject: e.subject,
+      sender: e.sender,
+      importanceScore: e.importanceScore,
+      importanceLevel: e.importanceLevel,
+    }));
+}
+
+let localTodos: TodoItem[] = deriveMockTodos();
 
 export const api = {
   async isBackendAvailable(): Promise<boolean> {
@@ -251,7 +273,30 @@ export const api = {
     return `${greeting}\n\n${bodyParagraphs}\n\n${signoff}`;
   },
 
+  async getTodos(): Promise<{ total: number; todos: TodoItem[] }> {
+    try {
+      const res = await fetch(`${BASE_URL}/todos`, { signal: AbortSignal.timeout(2000) });
+      if (!res.ok) throw new Error('API request failed');
+      return await res.json();
+    } catch {
+      return { total: localTodos.length, todos: localTodos };
+    }
+  },
+
+  async completeTodo(todoId: string): Promise<void> {
+    try {
+      const res = await fetch(`${BASE_URL}/todos/${todoId}/complete`, {
+        method: 'POST',
+        signal: AbortSignal.timeout(2000),
+      });
+      if (!res.ok) throw new Error('Failed to complete todo via API');
+    } catch {
+      localTodos = localTodos.filter(t => t.todoId !== todoId);
+    }
+  },
+
   resetDemoData() {
     localEmails = [...MOCK_EMAILS];
+    localTodos = deriveMockTodos();
   }
 };

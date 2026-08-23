@@ -14,7 +14,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 from ingestion import config as ingest_config
 from ingestion import store
 
-from . import incremental, persist
+from . import incremental, persist, todo
 from .orchestrate import STAGES, Pipeline
 
 # on_progress(stages, done, total) — stages identifies the batch being run.
@@ -38,6 +38,13 @@ def apply_score_spread(db_path: Optional[Path] = None) -> int:
     if changed:
         persist.upsert(changed, db_path)
     return len(changed)
+
+
+def sync_todos(db_path: Optional[Path] = None) -> int:
+    """Refresh the derived to-do list (pipeline/todo.py) against every
+    processed email. Cheap (no LLM), reads the whole table like the spread
+    pass, so it's run once at the end of a batch rather than per-email."""
+    return todo.sync(persist.all_processed(db_path), db_path)
 
 
 def apply_feedback_priors(db_path: Optional[Path] = None) -> int:
@@ -116,6 +123,7 @@ def process_incremental(
         "written": 0,
         "respread": 0,
         "feedbackApplied": 0,
+        "todosSynced": 0,
         "errors": [],
     }
     if dry_run:
@@ -123,9 +131,12 @@ def process_incremental(
 
     if not plan_map:
         # Nothing to reprocess, but feedback + spread still run so user
-        # corrections land and score distribution stays even.
+        # corrections land and score distribution stays even; the to-do
+        # list also needs a pass so a manually-sent reply (outside this app)
+        # still closes its needs_reply row.
         result["feedbackApplied"] = apply_feedback_priors(db_path)
         result["respread"] = apply_score_spread(db_path)
+        result["todosSynced"] = sync_todos(db_path)
         return result
 
     todo = [r for r in raws if r.email_id in plan_map]
@@ -154,6 +165,7 @@ def process_incremental(
     # then the spread pass evens out the final ordering.
     result["feedbackApplied"] = apply_feedback_priors(db_path)
     result["respread"] = apply_score_spread(db_path)
+    result["todosSynced"] = sync_todos(db_path)
     result["totalStored"] = persist.count(db_path)
     return result
 
@@ -183,7 +195,10 @@ def refresh_one(email_id: str, db_path: Optional[Path] = None):
     if stages:
         pipeline = Pipeline.with_defaults(stages=stages)
         persist.upsert(pipeline.process([raw], existing=existing), db_path)
-    return persist.get(email_id, db_path)
+    updated = persist.get(email_id, db_path)
+    if updated is not None:
+        todo.sync([updated], db_path)
+    return updated
 
 
 _refresh_lock = threading.Lock()

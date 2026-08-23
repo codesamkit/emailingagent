@@ -85,6 +85,55 @@ def categorize_topic(email: RawEmail) -> str:
     independently as stage "categorize"."""
 ```
 
+## Action items (Track B) → produces `action_items`
+
+> Added post-Phase 8 via the append-only schema process: new
+> `ProcessedEmail.action_items` field and new function, no existing
+> signature changed.
+
+```python
+# summarization/action_items.py
+def extract_action_items(email: RawEmail) -> list[str]:
+    """Concrete tasks/asks/deadlines the email states or clearly implies for
+    the recipient. Unlike summarize(), which explicitly omits inferred
+    action items, and unlike reply_outline (only set for read, non-no-reply
+    emails), this runs for EVERY email regardless of read/no-reply status —
+    a no-reply notification (e.g. an invoice) can still carry a real
+    deadline. Single LLM call, routable independently as stage
+    "action_items". Empty list if the email asks nothing of the recipient."""
+```
+
+## To-do list (application layer) → produces `todo_item` rows
+
+> Added post-Phase 8. A derived, user-checkable list layered on top of
+> `ProcessedEmail` — not a new track output, and not part of the frozen
+> `ProcessedEmail`/`RawEmail` contract. Types referenced below (`TodoItem`,
+> `TodoKind`, `TodoStatus`) are defined in `models/schema.py`.
+
+```python
+# pipeline/todo.py
+def sync(emails: list[ProcessedEmail], *, db_path=None) -> int:
+    """Inserts any new open todo rows implied by `emails` — one per string
+    in action_items, plus one "needs_reply" row per email that is not
+    no-reply and hasn't been replied to yet. todo_id is a stable hash of
+    (email_id, kind, text), so re-deriving the same item on a later
+    pipeline run recognizes it instead of inserting a duplicate — the
+    mechanism that lets a user's completion survive the next refresh.
+    needs_reply is also the one kind this function closes on its own: it's
+    fully determined by the email's current state, so a row whose condition
+    no longer holds is auto-resolved rather than left open forever. Called
+    once per batch from pipeline/refresh.py, after persistence."""
+
+def list_open(*, db_path=None) -> list[dict]:
+    """Open todo rows joined with their email's subject/sender/importance,
+    most important first. Consumed by GET /api/todos."""
+
+def complete(todo_id: str, *, db_path=None) -> bool:
+    """Marks one open row done. Returns False if it's unknown or already
+    done. Consumed by POST /api/todos/{todo_id}/complete — human-triggered
+    only, like every other mutating endpoint in api/main.py."""
+```
+
 ## Calendar (Track A) → produces `calendar_context`
 
 > **Package is `calendaring/`, not `calendar/`.** A top-level package named

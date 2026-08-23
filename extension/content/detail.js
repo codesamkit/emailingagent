@@ -58,7 +58,7 @@
     header.appendChild(el("span", "ea-panel-title", "Valence"));
 
     const tabs = el("div", "ea-tabs");
-    for (const [key, label] of [["email", "Email"], ["inbox", "Inbox"], ["ask", "Ask"]]) {
+    for (const [key, label] of [["email", "Email"], ["inbox", "Inbox"], ["ask", "Ask"], ["todo", "To-Do"]]) {
       const tab = el("button", "ea-tab", label);
       tab.dataset.tab = key;
       tab.addEventListener("click", () => setTab(key));
@@ -78,6 +78,7 @@
     panel.appendChild(el("div", "ea-panel-inbox"));
     const askPane = el("div", "ea-panel-ask");
     panel.appendChild(askPane);
+    panel.appendChild(el("div", "ea-panel-todo"));
     document.body.appendChild(panel);
 
     EmailAgentAsk.mount(askPane);
@@ -96,6 +97,8 @@
     panel.querySelector(".ea-panel-body").hidden = key !== "email";
     panel.querySelector(".ea-panel-inbox").hidden = key !== "inbox";
     panel.querySelector(".ea-panel-ask").hidden = key !== "ask";
+    panel.querySelector(".ea-panel-todo").hidden = key !== "todo";
+    if (key === "todo") renderTodo();
   }
 
   function showMessage(text) {
@@ -455,6 +458,71 @@
       list.appendChild(row);
     }
     wrap.appendChild(list);
+  }
+
+  // --- To-Do tab: extracted action items + "needs a reply" markers -----------
+  async function renderTodo() {
+    if (!panel) return;
+    const wrap = panel.querySelector(".ea-panel-todo");
+    wrap.replaceChildren(el("div", "ea-empty", "Loading…"));
+
+    const result = await EmailAgent.getTodos();
+    if (activeTab !== "todo") return; // user switched tabs mid-fetch
+    if (!result?.ok) {
+      wrap.replaceChildren(el("div", "ea-empty", "Couldn't load the to-do list — is the backend running?"));
+      return;
+    }
+
+    const todos = result.data.todos || [];
+    wrap.replaceChildren();
+    if (!todos.length) {
+      wrap.appendChild(el("div", "ea-empty", "Nothing outstanding — you're caught up."));
+      return;
+    }
+
+    for (const kind of ["action_item", "needs_reply"]) {
+      const items = todos.filter((t) => t.kind === kind);
+      if (!items.length) continue;
+      const sec = section(kind === "action_item" ? "Action items" : "Needs your reply");
+      const list = el("div", "ea-todo-list");
+      items.forEach((item) => list.appendChild(todoRow(item)));
+      sec.appendChild(list);
+      wrap.appendChild(sec);
+    }
+  }
+
+  function todoRow(item) {
+    const row = el("div", "ea-todo-row");
+    const check = el("button", "ea-todo-check");
+    check.title = "Mark complete";
+    check.addEventListener("click", () => completeTodo(item.todoId, row, check));
+    row.appendChild(check);
+
+    const text = el("div", "ea-todo-text-wrap");
+    text.appendChild(el("div", "ea-todo-text", item.text));
+    text.appendChild(el("div", "ea-todo-meta", `${item.sender || ""} — ${item.subject || "(no subject)"}`));
+    row.appendChild(text);
+
+    row.addEventListener("click", (e) => {
+      if (e.target === check) return;
+      // Gmail resolves legacy hex thread ids in the location hash, same as
+      // the Inbox tab's rows.
+      location.hash = `#all/${item.threadId}`;
+      setTab("email");
+    });
+    return row;
+  }
+
+  async function completeTodo(todoId, row, check) {
+    check.disabled = true;
+    row.classList.add("ea-todo-completing");
+    const result = await EmailAgent.completeTodo(todoId);
+    if (result?.ok) {
+      row.remove();
+    } else {
+      check.disabled = false;
+      row.classList.remove("ea-todo-completing");
+    }
   }
 
   // --- track which message is open -------------------------------------------

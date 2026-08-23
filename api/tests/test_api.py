@@ -668,3 +668,86 @@ class TestCancelCalendarEvent:
         assert response.status_code == 503
         # Cancel failed — the event must still be considered approved.
         assert client.get("/api/emails/proposed-meeting").json()["proposedEventStatus"] == "approved"
+
+
+class TestTodos:
+    """The fixture's DB rows are written via persist.upsert alone, so the
+    derived todo_item table starts empty — each test syncs it explicitly,
+    the same way the pipeline does at the end of a run."""
+
+    def _sync(self, db_path):
+        from pipeline import persist as persist_module
+        from pipeline import todo
+
+        todo.sync(persist_module.all_processed(db_path), db_path)
+
+    def test_action_items_appear_as_todos(self, client, tmp_path, monkeypatch):
+        db_path = main.DB_PATH
+        persist.upsert(
+            [email("with-actions", action_items=["Send the signed contract"],
+                   is_no_reply=True, reply_outline_status=ReplyOutlineStatus.NOT_APPLICABLE)],
+            db_path,
+        )
+        self._sync(db_path)
+
+        response = client.get("/api/todos")
+        assert response.status_code == 200
+        body = response.json()
+        texts = {t["text"] for t in body["todos"]}
+        assert "Send the signed contract" in texts
+
+    def test_needs_reply_todo_for_unreplied_eligible_email(self, client):
+        db_path = main.DB_PATH
+        self._sync(db_path)
+
+        response = client.get("/api/todos")
+        todos = response.json()["todos"]
+        assert any(
+            t["kind"] == "needs_reply" and t["emailId"] == "read-eligible" for t in todos
+        )
+
+    def test_no_reply_and_unread_emails_get_no_needs_reply_todo(self, client):
+        db_path = main.DB_PATH
+        self._sync(db_path)
+
+        todos = client.get("/api/todos").json()["todos"]
+        email_ids = {t["emailId"] for t in todos if t["kind"] == "needs_reply"}
+        assert "no-reply" not in email_ids
+
+    def test_complete_removes_it_from_the_open_list(self, client):
+        db_path = main.DB_PATH
+        persist.upsert(
+            [email("with-one-action", action_items=["Follow up with legal"],
+                   is_no_reply=True, reply_outline_status=ReplyOutlineStatus.NOT_APPLICABLE)],
+            db_path,
+        )
+        self._sync(db_path)
+        todo_id = next(
+            t["todoId"] for t in client.get("/api/todos").json()["todos"]
+            if t["text"] == "Follow up with legal"
+        )
+
+        response = client.post("/api/todos/{0}/complete".format(todo_id))
+        assert response.status_code == 200
+
+        remaining = client.get("/api/todos").json()["todos"]
+        assert not any(t["todoId"] == todo_id for t in remaining)
+
+    def test_completing_unknown_id_is_404(self, client):
+        assert client.post("/api/todos/does-not-exist/complete").status_code == 404
+
+    def test_completing_twice_is_404_the_second_time(self, client):
+        db_path = main.DB_PATH
+        persist.upsert(
+            [email("dup", action_items=["One task"],
+                   is_no_reply=True, reply_outline_status=ReplyOutlineStatus.NOT_APPLICABLE)],
+            db_path,
+        )
+        self._sync(db_path)
+        todo_id = next(
+            t["todoId"] for t in client.get("/api/todos").json()["todos"]
+            if t["text"] == "One task"
+        )
+
+        assert client.post("/api/todos/{0}/complete".format(todo_id)).status_code == 200
+        assert client.post("/api/todos/{0}/complete".format(todo_id)).status_code == 404

@@ -71,6 +71,7 @@ CREATE TABLE IF NOT EXISTS processed_email (
 
     summary                  TEXT,
     mentioned_dates          TEXT,          -- JSON array of date strings, verbatim
+    action_items             TEXT,          -- JSON array of action-item strings
 
     category                 TEXT,
 
@@ -271,10 +272,27 @@ CONTEXT_SCHEMAS: Tuple[str, ...] = (
     AGENT_MESSAGE_SCHEMA,
 )
 
+# --- To-do list (pipeline/todo.py) ------------------------------------------
+#
+# A brand-new table, so (like CONTEXT_SCHEMAS) it needs no MIGRATIONS entry —
+# the CREATE below already has every column a fresh database gets.
+TODO_ITEM_SCHEMA = """
+CREATE TABLE IF NOT EXISTS todo_item (
+    todo_id       TEXT PRIMARY KEY,
+    email_id      TEXT NOT NULL,
+    kind          TEXT NOT NULL CHECK (kind IN ('action_item', 'needs_reply')),
+    text          TEXT NOT NULL,
+    status        TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'done')),
+    created_at    TEXT NOT NULL,
+    completed_at  TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_todo_item_email ON todo_item (email_id);
+CREATE INDEX IF NOT EXISTS ix_todo_item_status ON todo_item (status);
+"""
+
 ALL_SCHEMAS: Tuple[str, ...] = (
-    RAW_EMAIL_SCHEMA,
-    PROCESSED_EMAIL_SCHEMA,
-) + CONTEXT_SCHEMAS
+    (RAW_EMAIL_SCHEMA, PROCESSED_EMAIL_SCHEMA) + CONTEXT_SCHEMAS + (TODO_ITEM_SCHEMA,)
+)
 
 # Columns added after a table first shipped: {table: ((column, DDL), ...)}.
 # Applied on every open so a database written by an earlier version keeps
@@ -304,6 +322,10 @@ MIGRATIONS: Dict[str, Sequence[Tuple[str, str]]] = {
         (
             "context_processed_at",
             "ALTER TABLE processed_email ADD COLUMN context_processed_at TEXT",
+        ),
+        (
+            "action_items",
+            "ALTER TABLE processed_email ADD COLUMN action_items TEXT",
         ),
     ),
 }

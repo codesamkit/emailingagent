@@ -23,6 +23,7 @@ _STAGE_OUTPUT = {
     "classify": "is_no_reply",
     "score": "importance_score",
     "summarize": "summary",
+    "action_items": "action_items",
     "categorize": "category",
     "scheduling": "is_scheduling_related",
     # chunk/embed/extract (the context pass) don't write to a ProcessedEmail

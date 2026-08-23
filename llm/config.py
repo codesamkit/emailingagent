@@ -28,6 +28,7 @@ ROUTABLE_STAGES = (
     "classify",
     "score",
     "summarize",
+    "action_items",
     "categorize",
     "outline",
     "extract",

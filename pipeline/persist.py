@@ -32,10 +32,10 @@ INSERT INTO processed_email (
     email_id, thread_id, sender, subject, received_at, read_status,
     is_no_reply, no_reply_reason,
     importance_score, importance_level, importance_justification,
-    summary, mentioned_dates, category, is_scheduling_related, calendar_context,
+    summary, mentioned_dates, action_items, category, is_scheduling_related, calendar_context,
     proposed_event, proposed_event_status,
     reply_outline, reply_outline_status, processed_at, context_processed_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(email_id) DO UPDATE SET
     thread_id                = excluded.thread_id,
     sender                   = excluded.sender,
@@ -49,6 +49,7 @@ ON CONFLICT(email_id) DO UPDATE SET
     importance_justification = excluded.importance_justification,
     summary                  = excluded.summary,
     mentioned_dates          = excluded.mentioned_dates,
+    action_items             = excluded.action_items,
     category                 = excluded.category,
     is_scheduling_related    = excluded.is_scheduling_related,
     calendar_context         = excluded.calendar_context,
@@ -188,6 +189,7 @@ def _to_row(email: ProcessedEmail, processed_at: Optional[datetime]) -> tuple:
         email.importance_justification,
         email.summary,
         json.dumps(email.mentioned_dates) if email.mentioned_dates is not None else None,
+        json.dumps(email.action_items) if email.action_items is not None else None,
         email.category,
         None if email.is_scheduling_related is None else int(email.is_scheduling_related),
         _encode_calendar_context(email.calendar_context),
@@ -222,6 +224,9 @@ def _row_to_email(row: sqlite3.Row) -> ProcessedEmail:
         summary=row["summary"],
         mentioned_dates=(
             json.loads(row["mentioned_dates"]) if row["mentioned_dates"] is not None else None
+        ),
+        action_items=(
+            json.loads(row["action_items"]) if row["action_items"] is not None else None
         ),
         category=row["category"],
         is_scheduling_related=_flag("is_scheduling_related"),
