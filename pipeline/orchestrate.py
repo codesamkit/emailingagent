@@ -1,10 +1,23 @@
 """The processing pipeline: raw_email in, processed_email out.
 
-Stage order is fixed and each stage is skippable, because the stages are not
-independent — the reply-outline gate reads `is_no_reply`, and the calendar
-stage only runs when the scheduling gate says so:
+Two passes, in this order, and the order is load-bearing:
 
-    classify -> score -> summarize -> categorize -> scheduling gate -> calendar -> outline
+    context pass    chunk -> embed -> extract          (per email, CONTEXT_STAGES)
+    reasoning pass  classify -> score -> summarize -> categorize
+                    -> scheduling gate -> calendar -> propose_event -> outline
+
+The context pass must finish for the WHOLE corpus before the reasoning pass
+runs for ANY email. Extraction builds the entity graph the reasoning stages
+retrieve from; if the two were interleaved per email, email #1's outline would
+be generated against a graph that only knows about email #1, while email #160's
+would see everything — the correlation the graph exists to provide would be
+available to the last message in a run and absent from the first. Hence two
+entry points (`run_context` then `process`) rather than one longer stage list,
+and hence CONTEXT_STAGES is deliberately NOT appended to STAGES.
+
+Within the reasoning pass, stage order is fixed and each stage is skippable,
+because the stages are not independent — the reply-outline gate reads
+`is_no_reply`, and the calendar stage only runs when the scheduling gate says so.
 
 Every stage is wrapped: one email that fails classification must not abort a
 100-email run. A stage failure leaves its field None, which is exactly what
@@ -18,12 +31,14 @@ editing the orchestrator.
 from __future__ import annotations
 
 import logging
-from dataclasses import replace
+from dataclasses import dataclass, field as dc_field, replace
 from datetime import datetime, timezone
-from typing import Callable, Dict, Iterable, List, Optional, Sequence
+from typing import Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from models.schema import (
+    Chunk,
     ChunkKind,
+    Mention,
     ProcessedEmail,
     ProposedEventStatus,
     RawEmail,
@@ -32,6 +47,11 @@ from models.schema import (
 )
 
 log = logging.getLogger(__name__)
+
+# The context pass. Separate from STAGES on purpose — see the module docstring:
+# these must complete corpus-wide before any reasoning stage runs, so they are
+# a different pass, not three more entries in the same list.
+CONTEXT_STAGES: Sequence[str] = ("chunk", "embed", "extract")
 
 # Stage names, in run order. Used by the CLI's --only/--skip flags and by
 # incremental.py to name the stages a change invalidates.
@@ -46,15 +66,11 @@ STAGES: Sequence[str] = (
     "outline",
 )
 
-# The context-graph pass (PHASES-COMPLEX.md Checkpoint 0): chunk -> embed ->
-# extract, run per email but BEFORE any reasoning stage, and for the WHOLE
-# corpus before any single email's reasoning stages run (see
-# process_context_one's docstring for why). Kept as its own tuple, not
-# folded into STAGES, since these stages produce chunks/vectors/mentions for
-# the context graph, not ProcessedEmail fields.
-CONTEXT_STAGES: Sequence[str] = ("chunk", "embed", "extract")
-
+# Every stage name the pipeline knows, context pass first. For CLI validation
+# and error messages; nothing iterates this to run stages, because the two
+# passes have separate entry points.
 ALL_STAGE_NAMES: Sequence[str] = tuple(CONTEXT_STAGES) + tuple(STAGES)
+
 
 # Once a proposed event has been acted on, a re-run must never regenerate or
 # overwrite it — APPROVED may already carry a live google_event_id, and
@@ -64,6 +80,28 @@ _TERMINAL_EVENT_STATUSES = (ProposedEventStatus.APPROVED, ProposedEventStatus.DE
 
 class StageError(Exception):
     """A single stage failed for a single email. Never fatal to a run."""
+
+
+@dataclass(frozen=True)
+class ContextResult:
+    """What the context pass derived from one email.
+
+    Returned rather than written, for the same reason `process` returns
+    ProcessedEmail records rather than persisting them: this module sequences
+    functions the other tracks own and contains no SQL. The caller hands these
+    to `context.store` — which is also what lets the whole pass be tested with
+    no database.
+    """
+
+    email_id: str
+    chunks: List[Chunk] = dc_field(default_factory=list)
+    # (chunk_id, float32 little-endian blob) for the BODY chunks only.
+    vectors: List[Tuple[str, bytes]] = dc_field(default_factory=list)
+    mentions: List[Mention] = dc_field(default_factory=list)
+
+    @property
+    def body_chunks(self) -> List[Chunk]:
+        return [c for c in self.chunks if c.kind == ChunkKind.BODY]
 
 
 def to_processed(raw: RawEmail) -> ProcessedEmail:
@@ -103,6 +141,9 @@ class Pipeline:
         stages: Optional[Sequence[str]] = None,
         calendar_window_days: int = 7,
     ):
+        self._chunk = chunk
+        self._embed = embed
+        self._extract = extract
         self._classify = classify
         self._score = score
         self._summarize = summarize
@@ -111,9 +152,6 @@ class Pipeline:
         self._calendar_context = calendar_context
         self._propose_event = propose_event
         self._outline = outline
-        self._chunk = chunk
-        self._embed = embed
-        self._extract = extract
         self.stages = tuple(stages if stages is not None else STAGES)
         self.calendar_window_days = calendar_window_days
         self.errors: List[str] = []
@@ -137,28 +175,17 @@ class Pipeline:
         from scoring.score import score_importance
         from summarization.summarize import summarize as summarize_one
 
-        # The context-graph stages (Track A: context/chunk.py, llm/embeddings.py,
-        # context/extract.py) don't exist until Track A's branch builds them.
-        # Importing them unconditionally would break with_defaults() for every
-        # caller -- including the 8 reasoning stages above, which have nothing
-        # to do with Track A -- until that package lands. Degrade to an unwired
-        # (None) stage instead, same as _run_stage already does for any stage
-        # whose callable is None: this starts working with zero further change
-        # to this file the moment context/chunk.py etc. exist.
-        try:
-            from context.chunk import chunk_email as chunk_fn
-        except ImportError:
-            chunk_fn = None
-        try:
-            from llm.embeddings import embed_texts as embed_fn
-        except ImportError:
-            embed_fn = None
-        try:
-            from context.extract import extract_entities as extract_fn
-        except ImportError:
-            extract_fn = None
+        # The context-pass imports are gated on the stage list, not just
+        # deferred: a reasoning-only run (the default, and every existing
+        # caller) must not pay to import numpy and the embeddings client, and
+        # must not fail because the context package is unavailable.
+        wanted = set(stages if stages is not None else STAGES)
+        context_kwargs = (
+            cls._context_defaults() if wanted & set(CONTEXT_STAGES) else {}
+        )
 
         return cls(
+            **context_kwargs,
             classify=is_no_reply,
             score=score_importance,
             summarize=summarize_one,
@@ -167,12 +194,18 @@ class Pipeline:
             calendar_context=get_calendar_context,
             propose_event=extract_proposed_event,
             outline=generate_reply_outline,
-            chunk=chunk_fn,
-            embed=embed_fn,
-            extract=extract_fn,
             stages=stages,
             **kwargs,
         )
+
+    @staticmethod
+    def _context_defaults() -> Dict[str, Callable]:
+        """The real context-pass implementations, imported on demand."""
+        from context.chunk import chunk_email
+        from context.embed import embed_chunks
+        from context.extract import extract_entities
+
+        return {"chunk": chunk_email, "embed": embed_chunks, "extract": extract_entities}
 
     # --- stage plumbing ----------------------------------------------------
 
@@ -193,40 +226,46 @@ class Pipeline:
             self.errors.append(message)
             return None
 
-    # --- context-graph pass --------------------------------------------------
+    # --- the context pass --------------------------------------------------
 
-    def process_context_one(self, raw: RawEmail) -> tuple:
-        """Run chunk -> embed -> extract for one email.
+    def run_context_one(self, raw: RawEmail) -> ContextResult:
+        """Chunk, embed, and extract one email. No DB writes, no ProcessedEmail.
 
-        Separate from process_one: these stages produce chunks/vectors/
-        mentions for the context graph (context/store.py persists them),
-        not ProcessedEmail fields. Two-pass ordering (PHASES-COMPLEX.md
-        section 2) requires the WHOLE corpus's context pass to finish, and
-        consolidate() to run, before ANY email's reasoning pass (classify
-        through outline) starts -- otherwise email #1's outline is built
-        against a graph that doesn't have email #160's entities in it yet.
-        Driving that corpus-wide two-pass order is pipeline/refresh.py's
-        job, not this method's -- this just runs the three stages for one
-        email, through the same _run_stage isolation every other stage
-        gets, so a chunking failure on email 47 doesn't cost the other 159.
-
-        Only kind=BODY chunks are embedded/extracted -- quoted text and
-        signatures are stored (by context/store.py) but poison embeddings
-        and misattribute entities if included (see context/chunk.py).
+        Chunking always runs when any context stage is enabled, even if only
+        "embed" or "extract" is due: it is pure string work with no network and
+        no model, and both of the expensive stages take chunks as input. Only
+        the two costly stages (an HTTP round trip and an LLM call) are gated,
+        which is where the savings actually are.
         """
+        if not set(self.stages) & set(CONTEXT_STAGES):
+            return ContextResult(email_id=raw.email_id)
+
         chunks = self._run_stage("chunk", raw.email_id, self._chunk, raw) or []
-        body_chunks = [c for c in chunks if getattr(c, "kind", None) == ChunkKind.BODY]
+        result = ContextResult(email_id=raw.email_id, chunks=list(chunks))
+        body = result.body_chunks
 
-        vectors: list = []
-        if body_chunks:
-            body_texts = [c.text for c in body_chunks]
-            vectors = self._run_stage("embed", raw.email_id, self._embed, body_texts) or []
+        # Only BODY chunks are embedded or mined. Quoted reply history would
+        # make every message in a thread near-identical in vector space, and
+        # would credit the quoted author's entities to whoever replied.
+        vectors = self._run_stage("embed", raw.email_id, self._embed, body) or []
+        mentions = self._run_stage("extract", raw.email_id, self._extract, raw, body) or []
+        return replace(result, vectors=list(vectors), mentions=list(mentions))
 
-        mentions = (
-            self._run_stage("extract", raw.email_id, self._extract, raw, body_chunks) or []
-        )
-
-        return chunks, vectors, mentions
+    def run_context(
+        self,
+        emails: Iterable[RawEmail],
+        on_progress: Optional[Callable[[int, int], None]] = None,
+    ) -> List[ContextResult]:
+        """The whole context pass over a batch. Run this to completion — and
+        then consolidate — before calling `process` on anything."""
+        emails = list(emails)
+        self.errors = []
+        results: List[ContextResult] = []
+        for index, raw in enumerate(emails, start=1):
+            results.append(self.run_context_one(raw))
+            if on_progress:
+                on_progress(index, len(emails))
+        return results
 
     # --- the pipeline ------------------------------------------------------
 

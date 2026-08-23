@@ -12,11 +12,11 @@ status. So the correct response is to re-run `outline` alone.
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import AbstractSet, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from models.schema import ProcessedEmail, ProposedEventStatus, RawEmail, ReadStatus
 
-from .orchestrate import ALL_STAGE_NAMES
+from .orchestrate import ALL_STAGE_NAMES, CONTEXT_STAGES
 
 # Which stage fills which field. A stage is due when its field is still unset.
 _STAGE_OUTPUT = {
@@ -35,6 +35,56 @@ _STAGE_OUTPUT = {
     "embed": "context_processed_at",
     "extract": "context_processed_at",
 }
+
+
+# The context pass needs its own map, because a context stage's output is not
+# a ProcessedEmail field — it is rows in a side table. `_STAGE_OUTPUT` above
+# answers "is this stage due?" by reading an attribute off the record; there is
+# no attribute to read for chunks, vectors, or mentions, and inventing one on
+# the shared schema to make the lookup uniform would be a fiction: nothing
+# would ever read it, and it would have to be kept in sync with row counts by
+# hand. So the question is answered against the tables instead, and this module
+# stays pure by taking the answer as an argument (see `context.store`'s
+# coverage query) rather than opening a connection itself. Public rather than
+# underscored because `context.store.context_coverage` reads it to keep the two
+# halves of the map from drifting — that makes it contract, not detail.
+CONTEXT_STAGE_TABLE = {
+    "chunk": "chunk",
+    "embed": "chunk_vec",
+    "extract": "mention",
+}
+
+# {stage: {email_id, ...}} — the emails that already have rows for that stage.
+ContextCoverage = Mapping[str, AbstractSet[str]]
+
+
+def context_stages_for(email_id: str, coverage: ContextCoverage) -> Tuple[str, ...]:
+    """The context stages still owed for one email.
+
+    Deliberately blind to read status. A read-status flip changes eligibility
+    for a reply outline; it does not change one character of the body, so
+    re-chunking, re-embedding, and re-extracting would be paid work for a
+    guaranteed-identical result. `stages_for` handles the flip by re-running
+    "outline" alone, and this function must not undo that thrift.
+    """
+    return tuple(
+        stage
+        for stage in CONTEXT_STAGES
+        if email_id not in (coverage.get(stage) or frozenset())
+    )
+
+
+def context_plan(
+    raws: Sequence[RawEmail],
+    coverage: ContextCoverage,
+) -> Dict[str, Tuple[str, ...]]:
+    """{email_id: context stages} for every email whose context is incomplete."""
+    out: Dict[str, Tuple[str, ...]] = {}
+    for raw in raws:
+        stages = context_stages_for(raw.email_id, coverage)
+        if stages:
+            out[raw.email_id] = stages
+    return out
 
 
 def stages_for(
@@ -114,7 +164,11 @@ def plan(
 
 
 def summarize_plan(plan_map: Dict[str, Tuple[str, ...]], total: int) -> str:
-    """A one-line human summary of what a run is about to do."""
+    """A one-line human summary of what a run is about to do.
+
+    Handles a context plan as well as a reasoning plan — the stage names are
+    disjoint, so ordering against both lists keeps either kind readable.
+    """
     if not plan_map:
         return "Nothing to do: all {0} emails are up to date.".format(total)
     counts: Dict[str, int] = {}
@@ -122,6 +176,8 @@ def summarize_plan(plan_map: Dict[str, Tuple[str, ...]], total: int) -> str:
         for stage in stages:
             counts[stage] = counts.get(stage, 0) + 1
     detail = ", ".join(
-        "{0}x{1}".format(stage, counts[stage]) for stage in ALL_STAGE_NAMES if stage in counts
+        "{0}x{1}".format(stage, counts[stage])
+        for stage in ALL_STAGE_NAMES
+        if stage in counts
     )
     return "{0}/{1} emails need work ({2})".format(len(plan_map), total, detail)

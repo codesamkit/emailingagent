@@ -197,44 +197,6 @@ def create_event(
     consent popup."""
 ```
 
-> Added post-Phase 8, append-only: `update_event`/`delete_event` in
-> `calendaring/events.py`, no existing signature changed. Called only from
-> `api/main.py`'s `/calendar-event/update` and `/calendar-event/cancel`
-> routes — explicit, human-triggered requests, never the pipeline. Only
-> reachable when `proposed_event_status == APPROVED`, i.e. after `create_event`
-> has already put a real event on Calendar.
-
-```python
-# calendaring/events.py
-def update_event(
-    event_id: str,
-    *,
-    summary: str | None = None,
-    start: datetime | None = None,
-    end: datetime | None = None,
-    description: str | None = None,
-    location: str | None = None,
-    attendees: list[str] | None = None,
-    calendar_id: str = "primary",
-    timezone_name: str | None = None,
-    service=None,
-) -> dict:
-    """events.patch — partial update. Renaming is summary=...; rescheduling
-    is start=.../end=...; an omitted field is left as-is on the event.
-    Unlike create_event, this RAISES on failure: the caller already has its
-    own try/except, and a failed edit must not flip proposed_event_status
-    away from APPROVED — the event still exists with its old data."""
-
-def delete_event(
-    event_id: str,
-    *,
-    calendar_id: str = "primary",
-    service=None,
-) -> None:
-    """events.delete. A 404/410 (already gone) is swallowed, not raised —
-    otherwise raises like update_event."""
-```
-
 ## Drafting (Track C) → produces `reply_outline`
 
 ```python
@@ -262,12 +224,55 @@ def expand_outline_to_full_draft(email_id: str) -> str:
 
 ---
 
-## Context graph (Track A) → produces `chunk`/`entity`/`mention`/`relation` rows
+# Context graph + retrieval (post-Phase 8)
 
-> Added at Checkpoint 0 (`PHASES-COMPLEX.md`), append-only: a new layer
-> alongside `ProcessedEmail`, not a replacement for it. Types referenced
-> below (`Chunk`, `Entity`, `Mention`, `Relation`, `EntityKind`, `ChunkKind`)
-> are defined in `models/schema.py`.
+> Added via the append-only process, like Categorization above: new dataclasses
+> in `models/schema.py`, eleven new tables in `models/db.py`, no existing
+> signature changed. See `PHASES-COMPLEX.md` for the design rationale and the
+> three-way ownership map.
+
+Track ownership below the shared contract:
+
+| | Owns | Also edits |
+|---|---|---|
+| A | `context/` | `llm/embeddings.py` |
+| B | `retrieval/` | `drafting/outline.py`, `summarization/summarize.py`, `scoring/signals.py` |
+| C | `agent/`, `extension/` | `api/main.py` |
+
+Types referenced here — `Chunk`, `ChunkKind`, `Entity`, `EntityKind`,
+`Mention`, `MentionSource`, `Relation`, `RelationKind`, `Brief`,
+`BriefNodeType`, `ContextSection`, `ContextPack` — are all in
+`models/schema.py`.
+
+**Two contract details worth reading before you build against them:**
+
+1. `node_brief` is keyed on **`(node_type, node_id)`**, not `node_id` alone.
+   `node_id` is a Gmail `thread_id` for THREAD briefs and an `entity_id` for
+   the other three, so upserts need `ON CONFLICT (node_type, node_id)`.
+2. The context pass is a **separate pass**, not three more entries in
+   `pipeline.orchestrate.STAGES`. `CONTEXT_STAGES` has its own entry point,
+   `Pipeline.run_context()` / `run_context_one()`, because every email's
+   context must be extracted and consolidated before *any* email's outline is
+   generated. Stage names are disjoint across the two lists; `ALL_STAGE_NAMES`
+   is the union, for CLI validation only.
+3. **"Dirty" means `node_brief.headline IS NULL`.** There is no flag column.
+   `context.consolidate` writes each node's CURRENT `evidence_email_ids` and
+   `evidence_hash`, and clears `headline` / `body_md` / `open_items` when the
+   hash moved; a node whose hash is unchanged is not touched at all, which is
+   what makes a no-op run cost zero brief calls. Track B's work queue is
+   `context.store.dirty_briefs()` — do not re-derive the query, and do not
+   recompute the hash: `context.consolidate.evidence_hash()` is the one
+   definition, and it includes each email's `processed_at`, so a re-summarized
+   email correctly counts as new evidence. After generating, write the brief
+   back with `context.store.upsert_briefs()`, carrying the same
+   `evidence_hash` the dirty row already holds.
+4. Populating the graph before the integration step: `python -m context.cli
+   build` runs the context pass plus `consolidate` over stored mail. It calls
+   the same `Pipeline.run_context_one` the integrated path will, so it is not a
+   second implementation — it exists because the graph has to be inspectable
+   before `pipeline/refresh.py` is rewired (INT1).
+
+## Context (Track A) → produces chunks, entities, mentions, relations
 
 ```python
 # context/chunk.py
@@ -277,83 +282,153 @@ def chunk_email(
     target_chars: int = 800,
     overlap: int = 100,
 ) -> list[Chunk]:
-    """Strips quoted reply history and signatures BEFORE chunking — load-
-    bearing, not tidiness: unstripped quote blocks make every email in a
-    thread look near-identical, poisoning embeddings and misattributing
-    entities. Stripped text is not discarded — emitted as kind=QUOTED/
-    SIGNATURE chunks so nothing is silently lost, just excluded from
-    embedding/extraction downstream. Remaining kind=BODY text is chunked on
-    paragraph boundaries to ~target_chars with overlap; never splits
-    mid-sentence."""
+    """Split one email into embeddable spans, quoted reply history and
+    signatures stripped out of the body FIRST and re-emitted as separate
+    Chunks with kind=QUOTED / kind=SIGNATURE — stored, never silently
+    dropped, but excluded from embedding and extraction downstream.
+    BODY chunks break on paragraph boundaries to roughly target_chars with
+    `overlap` characters of carry-over, and never mid-sentence. `ord` is the
+    position within the email across all kinds."""
+
+# context/normalize.py — pure string work, shared by extract and resolve
+def normalize_name(text: str, kind: EntityKind | None = None) -> str:
+    """The identity key for a surface form: lowercased, punctuation dropped,
+    leading article and generic noun removed ("the Atlas project" -> "atlas"),
+    trailing plural folded for the common-noun kinds. Conservative on purpose —
+    over-merging is this layer's primary risk."""
+def normalize_id(text: str) -> str:
+    """The identity key for a machine id: "cs-40350" / "CS 40350" -> "CS40350".
+    Never singularized, never word-dropped."""
+def normalize_address(value: str) -> str:
+    """A bare lowercased address, via scoring.signals._addr_only."""
+def provisional_id(kind: EntityKind, normalized_key: str) -> str:
+    """"<kind>:<key>" — what a Mention.entity_id holds before resolution.
+    `Mention` has no `kind` field, and extraction runs before any entity
+    exists, so the kind rides in the string and `resolve` rewrites it to a real
+    entity_id. A real entity_id contains no ":", so `parse_provisional`
+    returning None doubles as "already resolved"."""
+def parse_provisional(entity_id: str) -> tuple[EntityKind, str] | None: ...
+
+# context/embed.py
+def embed_chunks(chunks: Sequence[Chunk]) -> list[tuple[str, bytes]]:
+    """(chunk_id, vector blob) for the BODY chunks only. Thin adapter over
+    llm.embeddings.embed_texts so the pipeline injects one callable per stage;
+    non-BODY chunks are dropped rather than embedded."""
 
 # context/extract.py
-def extract_entities(
-    raw: RawEmail,
-    chunks: Sequence[Chunk],
-) -> list[Mention]:
-    """Deterministic first, LLM second (this repo's standing philosophy —
-    see classification/rules.py before classification/llm_fallback.py).
-    Pass 1 (free, exact): PERSON/ORG from headers, CASE/DOCUMENT ids by
-    regex — source=HEADER/REGEX, confidence 1.0. Pass 2 (one LLM call,
-    stage "extract"): PROJECT/DELIVERABLE/TOPIC only, plus which pass-1 ids
-    are this email's actual subject vs. an incidental mention — given only
-    kind=BODY chunks, never QUOTED/SIGNATURE. Schema declares `reason`
-    before the answer arrays; maxLength on every string."""
+def extract_entities(raw: RawEmail, chunks: Sequence[Chunk]) -> list[Mention]:
+    """Deterministic first, LLM second (the same posture as
+    classification/rules.py before classification/llm_fallback.py).
+    Pass 1, free and exact: PERSON/ORG from From/To/Cc/Reply-To, ORG from the
+    sender domain excluding free-mail providers; CASE/DOCUMENT ids by regex
+    over subject and body. Emitted with source=HEADER or REGEX, confidence 1.0.
+    Pass 2, one call on the "extract" stage: PROJECT / DELIVERABLE / TOPIC,
+    which regex cannot get, plus a judgment on which pass-1 ids this email is
+    actually *about* versus incidentally mentions. source=LLM.
+    `chunks` should be BODY chunks only; quoted and signature text is never
+    shown to the model and never yields a mention."""
 
 # context/resolve.py
-def resolve(mentions: list[Mention], existing: "EntityIndex") -> "ResolveResult":
-    """Deterministic ladder, first match wins: (1) exact normalized_key
-    within the same EntityKind, (2) entity_alias match, (3) same-kind
-    embedding cosine >= 0.86 against entity_vec, (4) else create a new
-    entity. PERSON entities key on the bare email address, never display
-    name. Pure and unit-testable — no model, no DB; embeddings are passed
-    in, not computed inside, so the 0.86 threshold can be tuned against
-    hand-built vectors in a test."""
+class EntityIndex:
+    """Read model over already-known entities. Pure — no DB, no model."""
+    by_key: dict[tuple[EntityKind, str], Entity]
+    by_alias: dict[tuple[EntityKind, str], Entity]
+    vectors: dict[str, bytes]          # entity_id -> vector blob
 
-# context/store.py
-def upsert_chunks(chunks: list[Chunk], *, db_path=None) -> None: ...
-def upsert_vectors(pairs: list[tuple[str, bytes]], *, db_path=None) -> None: ...
-def upsert_entities(entities: list[Entity], *, db_path=None) -> None: ...
-def upsert_mentions(mentions: list[Mention], *, db_path=None) -> None: ...
-def entities_for_email(email_id: str, *, db_path=None) -> list[Entity]: ...
-def emails_for_entity(entity_id: str, *, db_path=None) -> list[str]: ...
-def neighbors(entity_id: str, *, hops: int = 1, db_path=None) -> list[Entity]: ...
+@dataclass
+class ResolveResult:
+    mentions: list[Mention]            # entity_id now points at a real entity
+    entities: list[Entity]             # created or updated, ready to upsert
+    aliases: list[tuple[str, str]]     # (entity_id, alias)
+    created: int
+    merged: int
+
+def resolve(
+    mentions: Sequence[Mention],
+    existing: EntityIndex,
+    *,
+    embeddings: Mapping[str, bytes] | None = None,
+    threshold: float = 0.86,
+) -> ResolveResult:
+    """Deterministic ladder, first match wins: (1) exact normalized_key within
+    the same EntityKind, (2) alias match, (3) same-kind cosine >= threshold
+    against entity vectors, (4) create.
+    Pure by construction — no DB and no model call. Embeddings are passed in
+    rather than computed here so the threshold can be tuned against hand-built
+    vectors in a unit test; it is a guess, and it is the first number that will
+    move after real output is seen. PERSON entities key on the bare email
+    address, never a display name."""
+
+# context/store.py — thin persistence, every connection via models.db
+def upsert_chunks(chunks, *, db_path=None) -> int: ...
+def upsert_vectors(pairs, *, db_path=None) -> int: ...          # (id, blob)
+def upsert_entities(entities, *, db_path=None) -> int: ...
+def upsert_aliases(pairs, *, db_path=None) -> int: ...
+def upsert_mentions(mentions, *, db_path=None) -> int: ...
+def upsert_relations(relations, *, db_path=None) -> int: ...
+def entities_for_email(email_id, *, db_path=None) -> list[Entity]: ...
+def emails_for_entity(entity_id, *, db_path=None) -> list[str]: ...
+def neighbors(entity_id, *, hops=1, db_path=None) -> list[tuple[Entity, float, int]]:
+    """(entity, accumulated edge weight, hop distance), nearest hop first."""
+def chunks_for_email(email_id, *, kind=None, db_path=None) -> list[Chunk]: ...
 def load_all_vectors(*, db_path=None) -> tuple[list[str], "np.ndarray"]:
-    """One contiguous matrix, not a list of arrays — this is Track B's hot
-    path for the vector search channel."""
+    """(chunk_ids, matrix). ONE contiguous (n, dim) float32 matrix, not a list
+    of arrays — this is the vector channel's hot path. Rows are L2-normalized
+    on write, so similarity is `matrix @ query`, no renormalization."""
+def context_coverage(*, db_path=None) -> dict[str, set[str]]:
+    """{context stage: email_ids that already have rows}, for
+    pipeline.incremental.context_plan."""
+def load_entity_index(*, db_path=None) -> EntityIndex: ...
+def get_brief(node_type, node_id, *, db_path=None) -> Brief | None: ...
+def upsert_briefs(briefs, *, db_path=None) -> int: ...
+def dirty_briefs(*, db_path=None) -> list[Brief]:
+    """Briefs awaiting generation (headline IS NULL), largest evidence set
+    first. Track B's work queue — see contract detail 3 above."""
+def counts(*, db_path=None) -> dict[str, int]: ...
+def entity_counts_by_kind(*, db_path=None) -> dict[str, int]: ...
+def email_counts_for_entities(*, db_path=None) -> dict[str, int]: ...
 
 # context/consolidate.py
-def consolidate(db_path=None) -> "ConsolidateStats":
-    """Corpus-wide: resolves pending mentions via context.resolve, derives
-    relation edges (participant_in by co-occurrence, belongs_to when a
-    project co-occurs with a case across >=2 emails, symmetric mentions
-    edges otherwise), then marks affected node_brief rows dirty by
-    recomputing evidence_hash. Must run after the WHOLE corpus's
-    chunk/embed/extract pass, before ANY email's reasoning pass — see
-    pipeline/orchestrate.py's process_context_one docstring."""
+@dataclass
+class ConsolidateStats:
+    mentions_resolved: int
+    entities_created: int
+    entities_merged: int
+    relations_written: int
+    briefs_dirtied: int
+
+def evidence_hash(pairs: Sequence[tuple[str, str | None]]) -> str:
+    """Hash of (email_id, processed_at) pairs — a node's evidence fingerprint.
+    The ONE definition; Track B reads the stored value rather than recomputing."""
+
+def consolidate(db_path=None, *, threshold=0.86, embed=None) -> ConsolidateStats:
+    """Corpus-wide, run once after the context pass and before the reasoning
+    pass. Resolves pending mentions, derives relation edges (PERSON
+    --participant_in--> CASE|PROJECT by co-occurrence weighted by mention
+    count; CASE --belongs_to--> PROJECT only when they co-occur across 2+
+    emails, since one co-occurrence is coincidence; symmetric `mentions` edges
+    otherwise), recomputes entity salience, and marks node_brief rows dirty by
+    writing a fresh evidence_hash. Track B's brief rebuild reads that hash, so
+    a stale one means briefs never refresh."""
 ```
 
-## Embeddings (Track A) → local vectors for entity resolution and retrieval
-
 ```python
-# llm/embeddings.py
-def embed_texts(texts: list[str], *, model: str = "nomic-embed-text") -> list[bytes]:
-    """POSTs to ollama's /api/embed, batched. Vectors are normalized ON
-    WRITE and stored as float32 little-endian BLOBs, so cosine at query
-    time is a plain dot product — required for Track B's search path to
-    stay fast."""
-
+# llm/embeddings.py (Track A) — local, free, no hosted call
+def embed_texts(texts: Sequence[str], *, model: str = "nomic-embed-text") -> list[bytes]:
+    """Batched POST to ollama /api/embed. Returns one float32 little-endian
+    blob per input, in input order. Vectors are L2-NORMALIZED ON WRITE, which
+    is what makes cosine a plain dot product on the read path."""
 def cosine(a: bytes, b: bytes) -> float: ...
 def cosine_matrix(query: bytes, matrix: "np.ndarray") -> "np.ndarray": ...
 def to_blob(vec) -> bytes: ...
 def from_blob(blob: bytes) -> "np.ndarray": ...
-
 def check() -> str:
-    """Distinguishes 'ollama server is not running' from 'nomic-embed-text
-    is not pulled' — model llm/ollama.py:201's check()."""
+    """One human-readable line. Distinguishes "ollama is not running" from
+    "nomic-embed-text is not pulled" — different fixes, and both otherwise
+    surface as an opaque failure."""
 ```
 
-## Retrieval (Track B) → produces `ContextPack`/`Brief`
+## Retrieval (Track B) → produces `ContextPack`
 
 ```python
 # retrieval/search.py
@@ -363,73 +438,74 @@ class ScoredChunk:
     email_id: str
     text: str
     score: float
-    channel: str
+    channel: str                       # "bm25" | "vector" | "graph"
 
-def search(
-    query: str,
-    *,
-    k: int = 12,
-    anchor_email_id: str | None = None,
-    filters: dict | None = None,
-    db_path=None,
-) -> list[ScoredChunk]:
-    """Three independent channels — FTS5 bm25() over chunk_fts, cached-
-    matrix vector cosine, and a graph walk (entities_for_email -> neighbors
-    -> emails_for_entity, decayed per hop) — fused with Reciprocal Rank
-    Fusion (sum of 1/(60+rank) per channel), never a weighted sum of raw
-    scores. The graph channel is what produces cross-thread correlation."""
+def search(query, *, k=12, anchor_email_id=None, filters=None, db_path=None) -> list[ScoredChunk]:
+    """Three independent channels, each ranked separately, then fused by
+    Reciprocal Rank Fusion (`sum over channels of 1/(60 + rank)`) — NOT a
+    weighted sum of raw scores, because BM25 scores, cosines, and graph weights
+    are not commensurable and one channel would silently dominate.
+      bm25    FTS5 MATCH over chunk_fts, kind='body' only. Nails exact ids.
+      vector  query embedding · the pre-normalized chunk matrix.
+      graph   entities_for_email -> neighbors -> emails_for_entity -> chunks,
+              scored by salience x edge weight, decayed per hop. This is the
+              channel that produces cross-thread correlation."""
 
 # retrieval/pack.py
-def build_pack(
-    *,
-    anchor_email_id: str | None = None,
-    query: str | None = None,
-    budget_chars: int = 6000,
-    db_path=None,
-) -> ContextPack:
-    """The ONLY context-assembly function in the codebase — outline
-    generation, context-aware summarization, and agent/tools.py's
-    search_context tool all call this, never build context strings by
-    hand. Fixed priority order until budget_chars is spent: anchor's own
-    summary/subject, thread brief, case/project briefs, their open_items,
-    then top-k foreign chunks from search(). Every foreign ContextSection's
-    label carries provenance ("From <sender>, <date>, re: <subject>").
-    Deduplicates by email_id; never includes the anchor's own chunks as
-    foreign."""
+def build_pack(*, anchor_email_id=None, query=None, budget_chars=6000, db_path=None) -> ContextPack:
+    """The ONLY context-assembly function in the codebase. Outline generation,
+    context-aware summarization, and the agent's search tool all call this;
+    nobody builds a context string by hand.
+    Fixed priority order until the budget is spent: (1) anchor's own subject +
+    summary, (2) the thread brief if the thread has more than one message,
+    (3) case and project briefs for the anchor's entities, (4) their
+    open_items, (5) top-k foreign chunks from search().
+    Every foreign section's label carries provenance
+    ("From <sender>, <date>, re: <subject>"). Deduplicated by email_id, and the
+    anchor's own chunks are never included as foreign."""
 
 # retrieval/briefs.py
-def rebuild_dirty(db_path=None, *, limit: int | None = None) -> int:
-    """One LLM call (stage 'brief') per node whose evidence_hash changed.
-    Skips nodes with fewer than 2 emails, and skips entirely when
-    evidence_hash is unchanged — the whole point of storing it. Brief
-    content is a state document (what's happened / who's involved / what's
-    open / what was decided), not a per-email summary list."""
-
-def get_brief(node_type: str, node_id: str, db_path=None) -> Brief | None: ...
+def rebuild_dirty(db_path=None, *, limit=None) -> int:
+    """One "brief"-stage call per node in `context.store.dirty_briefs()`. Two
+    gates decide the cost: only nodes with 2+ emails (160 single-email briefs
+    say nothing the summary didn't), and an unchanged hash never reaches the
+    queue in the first place — consolidate leaves those rows untouched.
+    Write results back with `context.store.upsert_briefs`, preserving the
+    `evidence_hash` already on the row."""
+def get_brief(node_type, node_id, db_path=None) -> Brief | None:
+    """Thin pass-through to `context.store.get_brief` — one read path."""
 ```
 
 ## Agent (Track C) → the in-app assistant
 
 ```python
 # agent/tools.py
-TOOL_SPECS: list[dict]   # Anthropic tool-definition format
-
+TOOL_SPECS: list[dict]                 # Anthropic tool-definition format
 def dispatch(name: str, args: dict, *, db_path=None) -> dict:
-    """Nine tools, each reusing an existing implementation rather than
-    reimplementing it — see agent/tools.py's own docstring for the mapping.
-    Every result is JSON-serializable AND bounded (capped lists, truncated
-    text) — an unbounded get_email on a 5000-char body blows the loop's
-    context by turn three."""
+    """Nine tools, each REUSING an existing implementation rather than a second
+    one: search_context -> retrieval.pack.build_pack; get_email ->
+    pipeline.persist.get + ingestion.store.get; get_thread_brief /
+    get_entity_brief -> retrieval.briefs.get_brief; list_entities ->
+    context.store; find_open_items -> node_brief.open_items; list_queue ->
+    api.filters; draft_reply -> drafting.expand; summarize_selection ->
+    retrieval.pack + one call.
+    Every result is JSON-serializable AND bounded — lists capped, long text
+    truncated — because an unbounded get_email blows the loop's context by
+    turn three."""
 
 # agent/loop.py
-def run(messages: list[dict], *, max_turns: int = 8, db_path=None) -> "Iterator[Event]":
-    """Standard Anthropic tool-use loop via llm.client.get_client("agent").
-    Raises immediately, before the first API call, if the resolved provider
-    is ollama — llm/ollama.py has no tool-calling support and would
-    otherwise silently ignore `tools=` and return a confident, tool-free
-    answer. Yields text_delta/tool_start/tool_end/done events so the
-    transport layer can stream them. Never claims to have sent anything;
-    grounds answers in tool results and cites email_ids."""
+def run(messages, *, max_turns=8, db_path=None) -> Iterator[dict]:
+    """Anthropic tool-use loop on the "agent" stage, yielding
+    text_delta / tool_start / tool_end / done events so the transport can
+    stream. Raises before the first call if the resolved provider is ollama:
+    llm/ollama.py has no `tools` support and would ignore the parameter,
+    returning a confident answer having called nothing."""
+
+# agent/conversation.py — agent_conversation + agent_message tables
+def create(title=None) -> str: ...
+def append(conversation_id, role, content) -> None: ...
+def history(conversation_id, limit=None) -> list[dict]: ...
+def recent(limit=20) -> list[dict]: ...
 ```
 
 ---

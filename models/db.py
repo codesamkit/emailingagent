@@ -91,33 +91,40 @@ CREATE INDEX IF NOT EXISTS ix_processed_received_at ON processed_email (received
 CREATE INDEX IF NOT EXISTS ix_processed_read_status ON processed_email (read_status);
 """
 
-# --- Context graph (Checkpoint 0, PHASES-COMPLEX.md) -----------------------
+# --- Context graph ---------------------------------------------------------
+# Added post-Phase 8 (PHASES-COMPLEX.md Checkpoint 0). All new tables, so
+# nothing goes in MIGRATIONS: that dict exists only for columns added to a
+# table that already shipped, and CREATE TABLE IF NOT EXISTS handles the rest.
 #
-# Eleven new tables, none of which existed before this checkpoint, so none
-# get a MIGRATIONS entry below — that dict is only for columns added to a
-# table that already shipped; a brand-new table's CREATE already has every
-# column. Mirrors models/schema.py's Chunk/Entity/Mention/Relation/Brief/
-# agent_conversation/agent_message additions 1:1.
+# Vectors are float32 little-endian BLOBs read with numpy rather than a vector
+# extension: this interpreter's sqlite3 is built without
+# enable_load_extension, so sqlite-vec / sqlite-vss cannot be loaded at all.
+# At corpus scale (~1,500 chunks x 768 dims = ~4.6 MB) a brute-force dot
+# product over one contiguous matrix is ~5 ms, so an ANN index would be
+# complexity with no payoff. FTS5 *is* available and is used for real.
 
-CONTEXT_SCHEMAS: Tuple[str, ...] = (
-    # chunk_fts is this repo's first FTS5 table: an external-content virtual
-    # table over chunk.text, kept in sync by the three triggers below rather
-    # than duplicating the text into the index.
-    """
+CHUNK_SCHEMA = """
 CREATE TABLE IF NOT EXISTS chunk (
-    chunk_id    TEXT PRIMARY KEY,
-    email_id    TEXT NOT NULL,
-    ord         INTEGER NOT NULL,
-    text        TEXT NOT NULL,
-    kind        TEXT NOT NULL CHECK (kind IN ('body', 'quoted', 'signature'))
+    chunk_id   TEXT PRIMARY KEY,
+    email_id   TEXT NOT NULL,
+    ord        INTEGER NOT NULL,
+    text       TEXT NOT NULL,
+    kind       TEXT NOT NULL CHECK (kind IN ('body', 'quoted', 'signature'))
 );
 CREATE INDEX IF NOT EXISTS ix_chunk_email ON chunk (email_id);
-""",
-    """
+"""
+
+# External-content FTS5: the index stores only the inverted terms and reads
+# the column values back out of `chunk` by rowid, so body text is not stored
+# twice. That makes the triggers below mandatory rather than a convenience —
+# without them the index and the table drift apart silently and MATCH returns
+# rows whose text no longer exists.
+CHUNK_FTS_SCHEMA = """
 CREATE VIRTUAL TABLE IF NOT EXISTS chunk_fts USING fts5(
     text,
     content='chunk',
-    content_rowid='rowid'
+    content_rowid='rowid',
+    tokenize='unicode61'
 );
 CREATE TRIGGER IF NOT EXISTS chunk_fts_ai AFTER INSERT ON chunk BEGIN
     INSERT INTO chunk_fts (rowid, text) VALUES (new.rowid, new.text);
@@ -129,105 +136,145 @@ CREATE TRIGGER IF NOT EXISTS chunk_fts_au AFTER UPDATE ON chunk BEGIN
     INSERT INTO chunk_fts (chunk_fts, rowid, text) VALUES ('delete', old.rowid, old.text);
     INSERT INTO chunk_fts (rowid, text) VALUES (new.rowid, new.text);
 END;
-""",
-    """
+"""
+
+CHUNK_VEC_SCHEMA = """
 CREATE TABLE IF NOT EXISTS chunk_vec (
-    chunk_id    TEXT PRIMARY KEY,
-    dim         INTEGER NOT NULL,
-    vec         BLOB NOT NULL           -- float32 little-endian
+    chunk_id   TEXT PRIMARY KEY,
+    dim        INTEGER NOT NULL,
+    vec        BLOB NOT NULL
 );
-""",
-    """
+"""
+
+# The UNIQUE index is the deterministic half of entity resolution: an exact
+# normalized_key match within a kind must be an upsert, not a second node.
+# Scoped by kind on purpose — a PERSON called "Atlas" and a PROJECT called
+# "Atlas" are two different things and must never collapse into one.
+ENTITY_SCHEMA = """
 CREATE TABLE IF NOT EXISTS entity (
     entity_id       TEXT PRIMARY KEY,
-    kind            TEXT NOT NULL CHECK (
-        kind IN ('person', 'org', 'case', 'project', 'deliverable', 'document', 'topic')
-    ),
+    kind            TEXT NOT NULL,
     canonical_name  TEXT NOT NULL,
     normalized_key  TEXT NOT NULL,
     first_seen      TEXT,
     last_seen       TEXT,
     mention_count   INTEGER NOT NULL DEFAULT 0,
-    salience        REAL NOT NULL DEFAULT 0.0
+    salience        REAL NOT NULL DEFAULT 0
 );
 CREATE UNIQUE INDEX IF NOT EXISTS ux_entity_kind_key ON entity (kind, normalized_key);
-""",
-    """
+CREATE INDEX IF NOT EXISTS ix_entity_kind ON entity (kind);
+"""
+
+ENTITY_ALIAS_SCHEMA = """
 CREATE TABLE IF NOT EXISTS entity_alias (
-    entity_id          TEXT NOT NULL,
-    alias              TEXT NOT NULL,
-    normalized_alias   TEXT NOT NULL,
-    PRIMARY KEY (entity_id, alias)
+    entity_id        TEXT NOT NULL,
+    alias            TEXT NOT NULL,
+    normalized_alias TEXT NOT NULL,
+    PRIMARY KEY (entity_id, normalized_alias)
 );
-CREATE INDEX IF NOT EXISTS ix_entity_alias_normalized ON entity_alias (normalized_alias);
-""",
-    """
+CREATE INDEX IF NOT EXISTS ix_entity_alias_norm ON entity_alias (normalized_alias);
+"""
+
+ENTITY_VEC_SCHEMA = """
 CREATE TABLE IF NOT EXISTS entity_vec (
-    entity_id   TEXT PRIMARY KEY,
-    vec         BLOB NOT NULL           -- float32 little-endian
+    entity_id  TEXT PRIMARY KEY,
+    dim        INTEGER NOT NULL,
+    vec        BLOB NOT NULL
 );
-""",
-    """
+"""
+
+MENTION_SCHEMA = """
 CREATE TABLE IF NOT EXISTS mention (
     mention_id  TEXT PRIMARY KEY,
     entity_id   TEXT NOT NULL,
     email_id    TEXT NOT NULL,
     chunk_id    TEXT,
     span_text   TEXT NOT NULL,
-    confidence  REAL NOT NULL,
+    confidence  REAL NOT NULL DEFAULT 1.0,
     source      TEXT NOT NULL CHECK (source IN ('header', 'regex', 'llm'))
 );
 CREATE INDEX IF NOT EXISTS ix_mention_email ON mention (email_id);
 CREATE INDEX IF NOT EXISTS ix_mention_entity ON mention (entity_id);
-""",
-    """
+"""
+
+RELATION_SCHEMA = """
 CREATE TABLE IF NOT EXISTS relation (
-    src_entity_id        TEXT NOT NULL,
-    dst_entity_id        TEXT NOT NULL,
-    rel                  TEXT NOT NULL CHECK (
-        rel IN ('belongs_to', 'participant_in', 'mentions', 'owner_of')
-    ),
-    weight               REAL NOT NULL DEFAULT 0.0,
-    evidence_email_ids   TEXT NOT NULL DEFAULT '[]',   -- JSON array of email ids
+    src_entity_id      TEXT NOT NULL,
+    dst_entity_id      TEXT NOT NULL,
+    rel                TEXT NOT NULL,
+    weight             REAL NOT NULL DEFAULT 1.0,
+    evidence_email_ids TEXT NOT NULL DEFAULT '[]',   -- JSON array
     PRIMARY KEY (src_entity_id, dst_entity_id, rel)
 );
-""",
-    """
+CREATE INDEX IF NOT EXISTS ix_relation_src ON relation (src_entity_id);
+CREATE INDEX IF NOT EXISTS ix_relation_dst ON relation (dst_entity_id);
+"""
+
+# Keyed on (node_type, node_id), not node_id alone: node_id is a Gmail
+# thread_id for THREAD briefs and an entity_id for the other three, and the
+# read path is get_brief(node_type, node_id), so the composite key is the
+# real identity. evidence_hash is the cache key that keeps a brief from being
+# regenerated — an unchanged hash means an unchanged answer.
+NODE_BRIEF_SCHEMA = """
 CREATE TABLE IF NOT EXISTS node_brief (
-    node_type            TEXT NOT NULL CHECK (
-        node_type IN ('thread', 'case', 'project', 'person')
-    ),
-    node_id              TEXT NOT NULL,
-    headline             TEXT,
-    body_md              TEXT,
-    open_items           TEXT NOT NULL DEFAULT '[]',   -- JSON array of strings
-    evidence_email_ids   TEXT NOT NULL DEFAULT '[]',   -- JSON array of email ids
-    evidence_hash        TEXT,
-    generated_at         TEXT,
+    node_type          TEXT NOT NULL,
+    node_id            TEXT NOT NULL,
+    headline           TEXT,
+    body_md            TEXT,
+    open_items         TEXT NOT NULL DEFAULT '[]',   -- JSON array
+    evidence_email_ids TEXT NOT NULL DEFAULT '[]',   -- JSON array
+    evidence_hash      TEXT,
+    generated_at       TEXT,
     PRIMARY KEY (node_type, node_id)
 );
-""",
-    """
+CREATE INDEX IF NOT EXISTS ix_node_brief_type ON node_brief (node_type);
+"""
+
+# The in-app agent's chat log. It lives in the database rather than in the
+# extension because the panel is injected into Gmail, a SPA that remounts
+# content scripts constantly — in-memory chat state does not survive the user
+# clicking between messages.
+AGENT_CONVERSATION_SCHEMA = """
 CREATE TABLE IF NOT EXISTS agent_conversation (
-    conversation_id   TEXT PRIMARY KEY,
-    title             TEXT,
-    created_at        TEXT NOT NULL,
-    updated_at        TEXT NOT NULL
+    conversation_id TEXT PRIMARY KEY,
+    title           TEXT,
+    created_at      TEXT NOT NULL,
+    updated_at      TEXT NOT NULL
 );
-""",
-    """
+CREATE INDEX IF NOT EXISTS ix_agent_conversation_updated
+    ON agent_conversation (updated_at DESC);
+"""
+
+AGENT_MESSAGE_SCHEMA = """
 CREATE TABLE IF NOT EXISTS agent_message (
-    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
-    conversation_id    TEXT NOT NULL,
-    role               TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
-    content            TEXT NOT NULL,      -- JSON: list of Anthropic content blocks
-    created_at         TEXT NOT NULL
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    conversation_id TEXT NOT NULL,
+    role            TEXT NOT NULL,
+    content         TEXT NOT NULL,                  -- JSON content blocks
+    created_at      TEXT NOT NULL
 );
-CREATE INDEX IF NOT EXISTS ix_agent_message_conversation ON agent_message (conversation_id);
-""",
+CREATE INDEX IF NOT EXISTS ix_agent_message_conversation
+    ON agent_message (conversation_id, id);
+"""
+
+CONTEXT_SCHEMAS: Tuple[str, ...] = (
+    CHUNK_SCHEMA,
+    CHUNK_FTS_SCHEMA,
+    CHUNK_VEC_SCHEMA,
+    ENTITY_SCHEMA,
+    ENTITY_ALIAS_SCHEMA,
+    ENTITY_VEC_SCHEMA,
+    MENTION_SCHEMA,
+    RELATION_SCHEMA,
+    NODE_BRIEF_SCHEMA,
+    AGENT_CONVERSATION_SCHEMA,
+    AGENT_MESSAGE_SCHEMA,
 )
 
-ALL_SCHEMAS: Tuple[str, ...] = (RAW_EMAIL_SCHEMA, PROCESSED_EMAIL_SCHEMA) + CONTEXT_SCHEMAS
+ALL_SCHEMAS: Tuple[str, ...] = (
+    RAW_EMAIL_SCHEMA,
+    PROCESSED_EMAIL_SCHEMA,
+) + CONTEXT_SCHEMAS
 
 # Columns added after a table first shipped: {table: ((column, DDL), ...)}.
 # Applied on every open so a database written by an earlier version keeps
@@ -240,10 +287,6 @@ MIGRATIONS: Dict[str, Sequence[Tuple[str, str]]] = {
         ),
     ),
     "processed_email": (
-        (
-            "mentioned_dates",
-            "ALTER TABLE processed_email ADD COLUMN mentioned_dates TEXT",
-        ),
         ("category", "ALTER TABLE processed_email ADD COLUMN category TEXT"),
         (
             "proposed_event",
@@ -253,6 +296,10 @@ MIGRATIONS: Dict[str, Sequence[Tuple[str, str]]] = {
             "proposed_event_status",
             "ALTER TABLE processed_email ADD COLUMN proposed_event_status "
             "TEXT NOT NULL DEFAULT 'none'",
+        ),
+        (
+            "mentioned_dates",
+            "ALTER TABLE processed_email ADD COLUMN mentioned_dates TEXT",
         ),
         (
             "context_processed_at",
