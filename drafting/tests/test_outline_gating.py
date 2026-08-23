@@ -325,3 +325,30 @@ class TestExpand:
         with pytest.raises(NotYetImplementedError) as exc:
             expand_outline_to_full_draft("e1")
         assert "not implemented yet" in str(exc.value)
+
+    def test_default_tone_is_professional(self):
+        from drafting.expand import _TONE_INSTRUCTIONS, expand_outline_to_full_draft
+
+        fake = ExpandFakeClient()
+        expand_outline_to_full_draft("e1", ["Confirm the Friday deadline"], client=fake)
+
+        assert _TONE_INSTRUCTIONS["professional"] in fake.calls[0]["system"]
+
+    @pytest.mark.parametrize("tone", ["concise", "direct", "warm"])
+    def test_tone_changes_the_system_prompt(self, tone):
+        from drafting.expand import _TONE_INSTRUCTIONS, expand_outline_to_full_draft
+
+        fake = ExpandFakeClient()
+        expand_outline_to_full_draft("e1", ["Confirm the Friday deadline"], client=fake, tone=tone)
+
+        assert _TONE_INSTRUCTIONS[tone] in fake.calls[0]["system"]
+
+    def test_unknown_tone_falls_back_to_default_rather_than_erroring(self):
+        from drafting.expand import DEFAULT_TONE, _TONE_INSTRUCTIONS, expand_outline_to_full_draft
+
+        fake = ExpandFakeClient()
+        expand_outline_to_full_draft(
+            "e1", ["Confirm the Friday deadline"], client=fake, tone="sarcastic"
+        )
+
+        assert _TONE_INSTRUCTIONS[DEFAULT_TONE] in fake.calls[0]["system"]

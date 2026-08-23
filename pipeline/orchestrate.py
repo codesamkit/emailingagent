@@ -4,7 +4,7 @@ Stage order is fixed and each stage is skippable, because the stages are not
 independent — the reply-outline gate reads `is_no_reply`, and the calendar
 stage only runs when the scheduling gate says so:
 
-    classify -> score -> summarize -> categorize -> scheduling gate -> calendar -> outline
+    classify -> score -> summarize -> categorize -> scheduling gate -> calendar -> outline -> expand
 
 Every stage is wrapped: one email that fails classification must not abort a
 100-email run. A stage failure leaves its field None, which is exactly what
@@ -44,6 +44,7 @@ STAGES: Sequence[str] = (
     "calendar",
     "propose_event",
     "outline",
+    "expand",
 )
 
 # The context-graph pass (PHASES-COMPLEX.md Checkpoint 0): chunk -> embed ->
@@ -97,6 +98,7 @@ class Pipeline:
         calendar_context: Optional[Callable] = None,
         propose_event: Optional[Callable] = None,
         outline: Optional[Callable] = None,
+        expand: Optional[Callable] = None,
         chunk: Optional[Callable] = None,
         embed: Optional[Callable] = None,
         extract: Optional[Callable] = None,
@@ -111,6 +113,7 @@ class Pipeline:
         self._calendar_context = calendar_context
         self._propose_event = propose_event
         self._outline = outline
+        self._expand = expand
         self._chunk = chunk
         self._embed = embed
         self._extract = extract
@@ -133,6 +136,7 @@ class Pipeline:
         from calendaring.scheduling_intent import is_scheduling_related
         from classification.categorize import categorize_topic
         from classification.classify import is_no_reply
+        from drafting.expand import expand_outline_to_full_draft
         from drafting.outline import generate_reply_outline
         from scoring.score import score_importance
         from summarization.summarize import summarize as summarize_one
@@ -167,6 +171,7 @@ class Pipeline:
             calendar_context=get_calendar_context,
             propose_event=extract_proposed_event,
             outline=generate_reply_outline,
+            expand=expand_outline_to_full_draft,
             chunk=chunk_fn,
             embed=embed_fn,
             extract=extract_fn,
@@ -309,6 +314,23 @@ class Pipeline:
             _, status = is_eligible(record)
             if status != ReplyOutlineStatus.SUGGESTED:
                 record.reply_outline_status = status
+
+        # Full-draft expansion rides the outline's own eligibility gate — it
+        # only runs once, the first time an outline is suggested. A draft
+        # already on the record (from a prior run, or a user-triggered
+        # expand) is never overwritten here; regenerating one is a manual
+        # action (the API's /expand endpoint), not something a routine
+        # pipeline re-run should silently clobber.
+        if (
+            record.reply_outline_status == ReplyOutlineStatus.SUGGESTED
+            and record.reply_outline
+            and not record.reply_draft
+        ):
+            draft = self._run_stage(
+                "expand", raw.email_id, self._expand, record.email_id, outline=record.reply_outline
+            )
+            if draft is not None:
+                record.reply_draft = draft
 
         record.processed_at = now or datetime.now(timezone.utc)
         return record

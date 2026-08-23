@@ -109,6 +109,60 @@ class TestStageOrdering:
         assert seen["summary"] == "Dana needs the Q3 figures."
 
 
+class TestExpandStage:
+    def test_expand_runs_automatically_after_a_suggested_outline(self):
+        result = full_pipeline(
+            expand=lambda email_id, outline: "Hi Dana,\n\nConfirmed.\n\nBest,",
+        ).process_one(raw(), now=NOW)
+        assert result.reply_draft == "Hi Dana,\n\nConfirmed.\n\nBest,"
+
+    def test_expand_sees_the_generated_outline(self):
+        seen = {}
+
+        def expand(email_id, outline):
+            seen["email_id"] = email_id
+            seen["outline"] = outline
+            return "draft"
+
+        full_pipeline(expand=expand).process_one(raw(), now=NOW)
+        assert seen == {"email_id": "e1", "outline": ["Confirm the figures"]}
+
+    def test_expand_does_not_run_when_the_email_has_no_outline(self):
+        """Unread/no-reply emails never get an outline, so expand must not
+        even be attempted — same gate the outline stage itself enforces."""
+        calls = []
+        full_pipeline(
+            outline=lambda p, r: (None, ReplyOutlineStatus.NOT_APPLICABLE),
+            expand=lambda email_id, outline: calls.append(1) or "draft",
+        ).process_one(raw(), now=NOW)
+        assert calls == []
+
+    def test_expand_does_not_rerun_once_a_draft_already_exists(self):
+        """Zero-cost re-run: an email that already has a draft must not pay
+        for another LLM call just because the pipeline ran again."""
+        calls = []
+        existing = ProcessedEmail(
+            email_id="e1", thread_id="t1", sender="Dana <dana@example.com>",
+            subject="Hi", received_at=NOW, read_status=ReadStatus.READ,
+            reply_outline=["Confirm the figures"],
+            reply_outline_status=ReplyOutlineStatus.SUGGESTED,
+            reply_draft="Already expanded.",
+        )
+        result = full_pipeline(
+            expand=lambda email_id, outline: calls.append(1) or "new draft",
+        ).process_one(raw(), existing=existing, now=NOW)
+        assert calls == []
+        assert result.reply_draft == "Already expanded."
+
+    def test_expand_failure_leaves_the_draft_unset_without_aborting(self):
+        def boom(email_id, outline):
+            raise RuntimeError("API timeout")
+
+        result = full_pipeline(expand=boom).process_one(raw(), now=NOW)
+        assert result.reply_draft is None
+        assert result.reply_outline == ["Confirm the figures"]  # unaffected
+
+
 class TestCalendarGate:
     def test_calendar_is_not_fetched_for_non_scheduling_email(self):
         """The whole reason the cheap gate exists."""
@@ -294,6 +348,7 @@ class TestPersistenceRoundTrip:
                 suggested_slots=[CalendarSlot(s + timedelta(hours=2), s + timedelta(hours=3))],
                 existing_events=[{"summary": "Standup", "start": s, "all_day": False}],
             ),
+            expand=lambda email_id, outline: "Hi Dana,\n\nConfirmed.\n\nBest,",
         ).process_one(raw(), now=NOW)
 
         persist.upsert([result], db_path)
@@ -306,6 +361,7 @@ class TestPersistenceRoundTrip:
         assert back.category == "team planning"
         assert back.reply_outline == ["Confirm the figures"]
         assert back.reply_outline_status == ReplyOutlineStatus.SUGGESTED
+        assert back.reply_draft == "Hi Dana,\n\nConfirmed.\n\nBest,"
         assert back.read_status == ReadStatus.READ
         assert back.processed_at == NOW
         assert len(back.calendar_context.busy_blocks) == 1
@@ -355,6 +411,16 @@ class TestPersistenceRoundTrip:
 
     def test_update_outline_reports_unknown_email(self, tmp_path):
         assert not persist.update_outline("nope", ["x"], ReplyOutlineStatus.EDITED, tmp_path / "t.db")
+
+    def test_update_draft_persists_a_regenerated_draft(self, tmp_path):
+        db_path = tmp_path / "t.db"
+        persist.upsert([full_pipeline().process_one(raw(), now=NOW)], db_path)
+        assert persist.update_draft("e1", "Regenerated draft.", db_path)
+        back = persist.get("e1", db_path)
+        assert back.reply_draft == "Regenerated draft."
+
+    def test_update_draft_reports_unknown_email(self, tmp_path):
+        assert not persist.update_draft("nope", "x", tmp_path / "t.db")
 
     def test_proposed_event_survives_a_round_trip(self, tmp_path):
         db_path = tmp_path / "t.db"

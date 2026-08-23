@@ -6,11 +6,15 @@ calls; serving is a fast read of rows that job already wrote. Keeping those
 apart means no HTTP request ever waits on the pipeline, and the API needs no
 long timeouts, no job queue, and no background workers to be correct.
 
-Every mutating endpoint (edit an outline, expand a draft, approve/decline a
-proposed calendar event, update/cancel an approved one) is per-email and
-human-triggered — none of them is ever called by the batch pipeline. There
-is still no send-email endpoint; that stays out of the product until it is
-explicitly built and gated the same way.
+Every mutating endpoint (edit an outline, expand/regenerate a draft,
+approve/decline a proposed calendar event, update/cancel an approved one) is
+per-email and human-triggered. The batch pipeline auto-expands each eligible
+email's outline into a first draft once, on its own — see
+pipeline/orchestrate.py's "expand" stage — but never re-expands one that
+already has a draft; regenerating (with a different tone, say) stays a
+manual call to this endpoint. There is still no send-email endpoint; that
+stays out of the product until it is explicitly built and gated the same
+way.
 """
 
 from __future__ import annotations
@@ -274,13 +278,17 @@ def give_feedback(
 
 
 @app.post("/api/emails/{email_id}/expand", dependencies=[Depends(require_token)])
-def expand_draft(email_id: str) -> Dict[str, Any]:
-    """Expand an approved outline into full prose.
+def expand_draft(
+    email_id: str,
+    tone: Optional[str] = Body(None, embed=True),
+) -> Dict[str, Any]:
+    """(Re)expand an approved outline into full prose.
 
-    Wired end-to-end now so the UI's button has a real contract; the
-    underlying expansion is a later phase and currently returns 501 rather
-    than placeholder prose. Even once implemented, this returns text for the
-    user to review — it never sends anything.
+    The batch pipeline already auto-generates a first draft for every
+    eligible email (pipeline/orchestrate.py's "expand" stage) — this
+    endpoint is for a fresh one on demand: a different tone, or after the
+    user has edited the outline. It never sends anything, only returns text
+    for the user to review.
     """
     email = persist.get(email_id, DB_PATH)
     if email is None:
@@ -288,12 +296,17 @@ def expand_draft(email_id: str) -> Dict[str, Any]:
     if not email.reply_outline:
         raise HTTPException(status_code=409, detail="This email has no outline to expand.")
 
-    from drafting.expand import NotYetImplementedError, expand_outline_to_full_draft
+    from drafting.expand import DEFAULT_TONE, NotYetImplementedError, expand_outline_to_full_draft
 
     try:
-        return {"emailId": email_id, "draft": expand_outline_to_full_draft(email_id, email.reply_outline)}
+        draft = expand_outline_to_full_draft(
+            email_id, email.reply_outline, tone=tone or DEFAULT_TONE
+        )
     except NotYetImplementedError as exc:
         raise HTTPException(status_code=501, detail=str(exc))
+
+    persist.update_draft(email_id, draft, DB_PATH)
+    return {"emailId": email_id, "draft": draft}
 
 
 @app.post("/api/emails/{email_id}/refresh", dependencies=[Depends(require_token)])
