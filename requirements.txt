@@ -6,6 +6,16 @@ google-auth-httplib2>=0.1.1
 # Classification / scoring / summarization / drafting (Tracks B and C)
 anthropic>=0.125.0
 
+# Context graph + retrieval
+# numpy carries the vector channel: this interpreter's sqlite3 has no
+# enable_load_extension, so sqlite-vec/sqlite-vss cannot load and similarity is
+# a dot product over one contiguous float32 matrix instead.
+numpy>=1.24
+# requests is imported by llm/ollama.py:23 but was undeclared, arriving only
+# transitively through google-auth. A latent break: anything that trims the
+# Google client libraries takes the local-model backend down with it.
+requests>=2.31
+
 # API layer
 fastapi>=0.128.0
 uvicorn[standard]>=0.39.0

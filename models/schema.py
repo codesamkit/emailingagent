@@ -170,3 +170,219 @@ class ProcessedEmail:
     # Pipeline bookkeeping (pipeline/orchestrate.py) — set each time this
     # record is (re)processed; supports incremental re-run and debugging.
     processed_at: Optional[datetime] = None
+
+
+# ---------------------------------------------------------------------------
+# Context graph (post-Phase 8, PHASES-COMPLEX.md Checkpoint 0)
+#
+# Appended, never edited: every dataclass above already has rows in a shipped
+# database and callers in three tracks. Everything below describes the
+# retrieval substrate — chunks, entities, the edges between them, and the
+# cached briefs that summarize a subgraph — plus the char-budgeted
+# ContextPack that is the only shape an LLM prompt ever sees context in.
+#
+# These are frozen: unlike ProcessedEmail (which the pipeline fills in field
+# by field as stages run) a Chunk or a Mention is derived wholly in one pass
+# and then only ever replaced. Use dataclasses.replace to evolve one.
+# ---------------------------------------------------------------------------
+
+
+class EntityKind(str, Enum):
+    """What kind of thing a graph node is.
+
+    CASE is the CRM-shaped unit of work — a ticket, case, or incident, the
+    thing an ID like "SUP-4471" names. It is deliberately distinct from
+    PROJECT (the longer-lived container a case belongs to) because the whole
+    premise is correlating separate threads that share one case or project.
+    """
+
+    PERSON = "person"
+    ORG = "org"
+    CASE = "case"
+    PROJECT = "project"
+    DELIVERABLE = "deliverable"
+    DOCUMENT = "document"
+    TOPIC = "topic"
+
+
+class ChunkKind(str, Enum):
+    """Which part of a message a chunk came from.
+
+    Only BODY is embedded and mined for entities. QUOTED and SIGNATURE are
+    stored rather than discarded so nothing is silently lost, but including
+    them would make every message in a thread embed near-identically and
+    would attribute the quoted author's entities to the replier.
+    """
+
+    BODY = "body"
+    QUOTED = "quoted"
+    SIGNATURE = "signature"
+
+
+class MentionSource(str, Enum):
+    """Which extraction pass produced a mention.
+
+    Kept on the row so `context.cli email <id>` can show which pass found
+    what — a regex mention being wrong is a different fix from the model
+    hallucinating one.
+    """
+
+    HEADER = "header"
+    REGEX = "regex"
+    LLM = "llm"
+
+
+class RelationKind(str, Enum):
+    """The edge types in the graph.
+
+    A closed set rather than free strings: `context.consolidate` writes these
+    and `retrieval.search`'s graph walk reads them, and a typo in one place
+    would silently drop a whole channel's worth of edges.
+    """
+
+    BELONGS_TO = "belongs_to"          # case -> project
+    PARTICIPANT_IN = "participant_in"  # person -> case | project
+    MENTIONS = "mentions"              # symmetric catch-all co-occurrence
+    OWNER_OF = "owner_of"              # person -> deliverable | document
+
+
+class BriefNodeType(str, Enum):
+    """What a rollup brief summarizes.
+
+    THREAD keys on RawEmail.thread_id; the other three key on an entity_id.
+    """
+
+    THREAD = "thread"
+    CASE = "case"
+    PROJECT = "project"
+    PERSON = "person"
+
+
+@dataclass(frozen=True)
+class Chunk:
+    """One embeddable span of one email's text.
+
+    `ord` is the position within the email (0-based) so chunks can be put
+    back in reading order without consulting offsets.
+    """
+
+    chunk_id: str
+    email_id: str
+    ord: int
+    text: str
+    kind: ChunkKind = ChunkKind.BODY
+
+
+@dataclass(frozen=True)
+class Entity:
+    """A resolved graph node — one real-world thing, however many ways it
+    was written.
+
+    `normalized_key` is the deterministic identity used for exact matching
+    and is unique per (kind, key): for PERSON it is the bare email address,
+    never the display name, because the same human arrives as "Sam",
+    "Sam Shah", and "S. Shah" in different messages. `aliases` records every
+    surface form seen, which is what lets a later mention match without an
+    embedding comparison.
+    """
+
+    entity_id: str
+    kind: EntityKind
+    canonical_name: str
+    normalized_key: str
+    aliases: list[str] = field(default_factory=list)
+    first_seen: Optional[datetime] = None
+    last_seen: Optional[datetime] = None
+    mention_count: int = 0
+    # How central this node is to the corpus, 0-1. Used to rank the graph
+    # retrieval channel; a node mentioned once should not outrank a project
+    # that runs through forty emails.
+    salience: float = 0.0
+
+
+@dataclass(frozen=True)
+class Mention:
+    """One occurrence of one entity in one email.
+
+    `chunk_id` is None for mentions that come from headers or the subject
+    line, which belong to the message rather than to any body chunk.
+    """
+
+    email_id: str
+    entity_id: str
+    span_text: str
+    chunk_id: Optional[str] = None
+    confidence: float = 1.0
+    source: MentionSource = MentionSource.REGEX
+
+
+@dataclass(frozen=True)
+class Relation:
+    """A weighted, evidenced edge between two entities.
+
+    `evidence_email_ids` is what makes an edge auditable — a relation with
+    one supporting email is a coincidence, and the consolidation pass uses
+    the count to decide whether an edge is real.
+    """
+
+    src_entity_id: str
+    dst_entity_id: str
+    rel: RelationKind
+    weight: float = 1.0
+    evidence_email_ids: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class Brief:
+    """A cached, LLM-written state document for one node of the rollup tree.
+
+    This is the "working memory" of the design: not a digest of the emails
+    underneath (we already have per-email summaries, and concatenating them
+    is worthless) but what has happened, who is involved, what is still open,
+    and what was decided.
+
+    `evidence_hash` is the cache key — a hash over the sorted evidence
+    email_ids and their processed_at values. Unchanged hash means the brief
+    is still true, and regenerating it would be a paid call for no new
+    information.
+    """
+
+    node_type: BriefNodeType
+    node_id: str
+    headline: str
+    body_md: str
+    open_items: list[str] = field(default_factory=list)
+    evidence_email_ids: list[str] = field(default_factory=list)
+    evidence_hash: str = ""
+    generated_at: Optional[datetime] = None
+
+
+@dataclass(frozen=True)
+class ContextSection:
+    """One labelled, attributed block inside a ContextPack.
+
+    `label` carries provenance ("From <sender>, <date>, re: <subject>")
+    because without it a model blurs facts from several emails together
+    instead of citing them, and a wrong claim can't be traced to its source.
+    """
+
+    label: str
+    text: str
+    source_email_ids: list[str] = field(default_factory=list)
+    score: float = 0.0
+
+
+@dataclass(frozen=True)
+class ContextPack:
+    """Everything an LLM call is allowed to know beyond the email itself.
+
+    The single currency of the retrieval layer: outline generation,
+    context-aware summarization, and the agent's search tool all consume
+    this one shape, so there is exactly one place where a char budget is
+    enforced and one place where provenance is attached.
+    """
+
+    query: Optional[str] = None
+    anchor_email_id: Optional[str] = None
+    sections: list[ContextSection] = field(default_factory=list)
+    total_chars: int = 0

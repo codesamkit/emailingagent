@@ -15,8 +15,25 @@ ANTHROPIC = "anthropic"
 OLLAMA = "ollama"
 PROVIDERS = (ANTHROPIC, OLLAMA)
 
-# The stages that can be routed independently. Names match pipeline STAGES.
-ROUTABLE_STAGES = ("classify", "score", "summarize", "categorize", "outline")
+# The stages that can be routed independently. Names match pipeline STAGES,
+# plus the three context-graph stages that make their own model calls:
+# "extract" (span extraction, high volume and mechanical — a mid-tier model is
+# right), "brief" (rollup state documents), and "agent" (the tool-use loop,
+# where judgment is most visible). `provider_for` and `model_for` need no
+# change to serve them: both read LLM_PROVIDER_<STAGE> / LLM_MODEL_<STAGE> from
+# the stage name they are handed, and neither consults this tuple — it exists
+# for `llm.client.describe()` and the CLI, so a stage missing from it is
+# routable but invisible.
+ROUTABLE_STAGES = (
+    "classify",
+    "score",
+    "summarize",
+    "categorize",
+    "outline",
+    "extract",
+    "brief",
+    "agent",
+)
 
 
 def _clean(value: Optional[str]) -> Optional[str]:

@@ -224,6 +224,241 @@ def expand_outline_to_full_draft(email_id: str) -> str:
 
 ---
 
+# Context graph + retrieval (post-Phase 8)
+
+> Added via the append-only process, like Categorization above: new dataclasses
+> in `models/schema.py`, eleven new tables in `models/db.py`, no existing
+> signature changed. See `PHASES-COMPLEX.md` for the design rationale and the
+> three-way ownership map.
+
+Track ownership below the shared contract:
+
+| | Owns | Also edits |
+|---|---|---|
+| A | `context/` | `llm/embeddings.py` |
+| B | `retrieval/` | `drafting/outline.py`, `summarization/summarize.py`, `scoring/signals.py` |
+| C | `agent/`, `extension/` | `api/main.py` |
+
+Types referenced here — `Chunk`, `ChunkKind`, `Entity`, `EntityKind`,
+`Mention`, `MentionSource`, `Relation`, `RelationKind`, `Brief`,
+`BriefNodeType`, `ContextSection`, `ContextPack` — are all in
+`models/schema.py`.
+
+**Two contract details worth reading before you build against them:**
+
+1. `node_brief` is keyed on **`(node_type, node_id)`**, not `node_id` alone.
+   `node_id` is a Gmail `thread_id` for THREAD briefs and an `entity_id` for
+   the other three, so upserts need `ON CONFLICT (node_type, node_id)`.
+2. The context pass is a **separate pass**, not three more entries in
+   `pipeline.orchestrate.STAGES`. `CONTEXT_STAGES` has its own entry point,
+   `Pipeline.run_context()`, because every email's context must be extracted
+   and consolidated before *any* email's outline is generated. Stage names are
+   disjoint across the two lists; `ALL_STAGE_NAMES` is the union, for CLI
+   validation only.
+
+## Context (Track A) → produces chunks, entities, mentions, relations
+
+```python
+# context/chunk.py
+def chunk_email(
+    raw: RawEmail,
+    *,
+    target_chars: int = 800,
+    overlap: int = 100,
+) -> list[Chunk]:
+    """Split one email into embeddable spans, quoted reply history and
+    signatures stripped out of the body FIRST and re-emitted as separate
+    Chunks with kind=QUOTED / kind=SIGNATURE — stored, never silently
+    dropped, but excluded from embedding and extraction downstream.
+    BODY chunks break on paragraph boundaries to roughly target_chars with
+    `overlap` characters of carry-over, and never mid-sentence. `ord` is the
+    position within the email across all kinds."""
+
+# context/embed.py
+def embed_chunks(chunks: Sequence[Chunk]) -> list[tuple[str, bytes]]:
+    """(chunk_id, vector blob) for the BODY chunks only. Thin adapter over
+    llm.embeddings.embed_texts so the pipeline injects one callable per stage;
+    non-BODY chunks are dropped rather than embedded."""
+
+# context/extract.py
+def extract_entities(raw: RawEmail, chunks: Sequence[Chunk]) -> list[Mention]:
+    """Deterministic first, LLM second (the same posture as
+    classification/rules.py before classification/llm_fallback.py).
+    Pass 1, free and exact: PERSON/ORG from From/To/Cc/Reply-To, ORG from the
+    sender domain excluding free-mail providers; CASE/DOCUMENT ids by regex
+    over subject and body. Emitted with source=HEADER or REGEX, confidence 1.0.
+    Pass 2, one call on the "extract" stage: PROJECT / DELIVERABLE / TOPIC,
+    which regex cannot get, plus a judgment on which pass-1 ids this email is
+    actually *about* versus incidentally mentions. source=LLM.
+    `chunks` should be BODY chunks only; quoted and signature text is never
+    shown to the model and never yields a mention."""
+
+# context/resolve.py
+class EntityIndex:
+    """Read model over already-known entities. Pure — no DB, no model."""
+    by_key: dict[tuple[EntityKind, str], Entity]
+    by_alias: dict[tuple[EntityKind, str], Entity]
+    vectors: dict[str, bytes]          # entity_id -> vector blob
+
+@dataclass
+class ResolveResult:
+    mentions: list[Mention]            # entity_id now points at a real entity
+    entities: list[Entity]             # created or updated, ready to upsert
+    aliases: list[tuple[str, str]]     # (entity_id, alias)
+    created: int
+    merged: int
+
+def resolve(
+    mentions: Sequence[Mention],
+    existing: EntityIndex,
+    *,
+    embeddings: Mapping[str, bytes] | None = None,
+    threshold: float = 0.86,
+) -> ResolveResult:
+    """Deterministic ladder, first match wins: (1) exact normalized_key within
+    the same EntityKind, (2) alias match, (3) same-kind cosine >= threshold
+    against entity vectors, (4) create.
+    Pure by construction — no DB and no model call. Embeddings are passed in
+    rather than computed here so the threshold can be tuned against hand-built
+    vectors in a unit test; it is a guess, and it is the first number that will
+    move after real output is seen. PERSON entities key on the bare email
+    address, never a display name."""
+
+# context/store.py — thin persistence, every connection via models.db
+def upsert_chunks(chunks, *, db_path=None) -> int: ...
+def upsert_vectors(pairs, *, db_path=None) -> int: ...          # (id, blob)
+def upsert_entities(entities, *, db_path=None) -> int: ...
+def upsert_aliases(pairs, *, db_path=None) -> int: ...
+def upsert_mentions(mentions, *, db_path=None) -> int: ...
+def upsert_relations(relations, *, db_path=None) -> int: ...
+def entities_for_email(email_id, *, db_path=None) -> list[Entity]: ...
+def emails_for_entity(entity_id, *, db_path=None) -> list[str]: ...
+def neighbors(entity_id, *, hops=1, db_path=None) -> list[tuple[Entity, float, int]]:
+    """(entity, accumulated edge weight, hop distance), nearest hop first."""
+def chunks_for_email(email_id, *, kind=None, db_path=None) -> list[Chunk]: ...
+def load_all_vectors(*, db_path=None) -> tuple[list[str], "np.ndarray"]:
+    """(chunk_ids, matrix). ONE contiguous (n, dim) float32 matrix, not a list
+    of arrays — this is the vector channel's hot path. Rows are L2-normalized
+    on write, so similarity is `matrix @ query`, no renormalization."""
+def context_coverage(*, db_path=None) -> dict[str, set[str]]:
+    """{context stage: email_ids that already have rows}, for
+    pipeline.incremental.context_plan."""
+def load_entity_index(*, db_path=None) -> EntityIndex: ...
+
+# context/consolidate.py
+@dataclass
+class ConsolidateStats:
+    mentions_resolved: int
+    entities_created: int
+    entities_merged: int
+    relations_written: int
+    briefs_dirtied: int
+
+def consolidate(db_path=None) -> ConsolidateStats:
+    """Corpus-wide, run once after the context pass and before the reasoning
+    pass. Resolves pending mentions, derives relation edges (PERSON
+    --participant_in--> CASE|PROJECT by co-occurrence weighted by mention
+    count; CASE --belongs_to--> PROJECT only when they co-occur across 2+
+    emails, since one co-occurrence is coincidence; symmetric `mentions` edges
+    otherwise), recomputes entity salience, and marks node_brief rows dirty by
+    writing a fresh evidence_hash. Track B's brief rebuild reads that hash, so
+    a stale one means briefs never refresh."""
+```
+
+```python
+# llm/embeddings.py (Track A) — local, free, no hosted call
+def embed_texts(texts: Sequence[str], *, model: str = "nomic-embed-text") -> list[bytes]:
+    """Batched POST to ollama /api/embed. Returns one float32 little-endian
+    blob per input, in input order. Vectors are L2-NORMALIZED ON WRITE, which
+    is what makes cosine a plain dot product on the read path."""
+def cosine(a: bytes, b: bytes) -> float: ...
+def cosine_matrix(query: bytes, matrix: "np.ndarray") -> "np.ndarray": ...
+def to_blob(vec) -> bytes: ...
+def from_blob(blob: bytes) -> "np.ndarray": ...
+def check() -> str:
+    """One human-readable line. Distinguishes "ollama is not running" from
+    "nomic-embed-text is not pulled" — different fixes, and both otherwise
+    surface as an opaque failure."""
+```
+
+## Retrieval (Track B) → produces `ContextPack`
+
+```python
+# retrieval/search.py
+@dataclass
+class ScoredChunk:
+    chunk_id: str
+    email_id: str
+    text: str
+    score: float
+    channel: str                       # "bm25" | "vector" | "graph"
+
+def search(query, *, k=12, anchor_email_id=None, filters=None, db_path=None) -> list[ScoredChunk]:
+    """Three independent channels, each ranked separately, then fused by
+    Reciprocal Rank Fusion (`sum over channels of 1/(60 + rank)`) — NOT a
+    weighted sum of raw scores, because BM25 scores, cosines, and graph weights
+    are not commensurable and one channel would silently dominate.
+      bm25    FTS5 MATCH over chunk_fts, kind='body' only. Nails exact ids.
+      vector  query embedding · the pre-normalized chunk matrix.
+      graph   entities_for_email -> neighbors -> emails_for_entity -> chunks,
+              scored by salience x edge weight, decayed per hop. This is the
+              channel that produces cross-thread correlation."""
+
+# retrieval/pack.py
+def build_pack(*, anchor_email_id=None, query=None, budget_chars=6000, db_path=None) -> ContextPack:
+    """The ONLY context-assembly function in the codebase. Outline generation,
+    context-aware summarization, and the agent's search tool all call this;
+    nobody builds a context string by hand.
+    Fixed priority order until the budget is spent: (1) anchor's own subject +
+    summary, (2) the thread brief if the thread has more than one message,
+    (3) case and project briefs for the anchor's entities, (4) their
+    open_items, (5) top-k foreign chunks from search().
+    Every foreign section's label carries provenance
+    ("From <sender>, <date>, re: <subject>"). Deduplicated by email_id, and the
+    anchor's own chunks are never included as foreign."""
+
+# retrieval/briefs.py
+def rebuild_dirty(db_path=None, *, limit=None) -> int:
+    """One "brief"-stage call per node whose evidence_hash changed. Two gates
+    that decide the cost: only nodes with 2+ emails (160 single-email briefs
+    say nothing the summary didn't), and skip entirely on an unchanged hash."""
+def get_brief(node_type, node_id, db_path=None) -> Brief | None: ...
+```
+
+## Agent (Track C) → the in-app assistant
+
+```python
+# agent/tools.py
+TOOL_SPECS: list[dict]                 # Anthropic tool-definition format
+def dispatch(name: str, args: dict, *, db_path=None) -> dict:
+    """Nine tools, each REUSING an existing implementation rather than a second
+    one: search_context -> retrieval.pack.build_pack; get_email ->
+    pipeline.persist.get + ingestion.store.get; get_thread_brief /
+    get_entity_brief -> retrieval.briefs.get_brief; list_entities ->
+    context.store; find_open_items -> node_brief.open_items; list_queue ->
+    api.filters; draft_reply -> drafting.expand; summarize_selection ->
+    retrieval.pack + one call.
+    Every result is JSON-serializable AND bounded — lists capped, long text
+    truncated — because an unbounded get_email blows the loop's context by
+    turn three."""
+
+# agent/loop.py
+def run(messages, *, max_turns=8, db_path=None) -> Iterator[dict]:
+    """Anthropic tool-use loop on the "agent" stage, yielding
+    text_delta / tool_start / tool_end / done events so the transport can
+    stream. Raises before the first call if the resolved provider is ollama:
+    llm/ollama.py has no `tools` support and would ignore the parameter,
+    returning a confident answer having called nothing."""
+
+# agent/conversation.py — agent_conversation + agent_message tables
+def create(title=None) -> str: ...
+def append(conversation_id, role, content) -> None: ...
+def history(conversation_id, limit=None) -> list[dict]: ...
+def recent(limit=20) -> list[dict]: ...
+```
+
+---
+
 ## Notes on gating (applies to Drafting)
 
 `generate_reply_outline` must check `read_status` and `is_no_reply` with a
