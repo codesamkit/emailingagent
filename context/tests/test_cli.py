@@ -134,6 +134,8 @@ class GraphTest(CliTestCase):
         _, out = run("graph", *self.db)
         self.assertIn("FRAGMENTATION CHECK", out)
         self.assertIn("1-EMAIL", out)
+        self.assertIn("KEYED ON", out)
+        self.assertIn("exact", out, "exact-keyed kinds cannot fragment")
         # Reported per kind: a DOCUMENT appearing once is not fragmentation,
         # a CASE appearing once probably is.
         self.assertIn("case", out)

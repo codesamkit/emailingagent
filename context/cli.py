@@ -169,6 +169,8 @@ def cmd_graph(args: argparse.Namespace) -> int:
         for project in projects[: args.limit]:
             _print_project(project, email_counts, db_path, args.depth)
 
+    from .resolve import _EXACT_ONLY_KINDS
+
     print("\nFRAGMENTATION CHECK — share of nodes appearing in only one email")
     rows = []
     for kind in _KIND_ORDER:
@@ -179,16 +181,25 @@ def cmd_graph(args: argparse.Namespace) -> int:
             e for e in entities if email_counts.get(e.entity_id, 0) <= 1
         ]
         rows.append((
-            kind.value, len(entities), len(orphans),
+            kind.value,
+            "exact" if kind in _EXACT_ONLY_KINDS else "name",
+            len(entities),
+            len(orphans),
             "{0:.0f}%".format(100.0 * len(orphans) / len(entities)),
         ))
-    _table(("KIND", "NODES", "1-EMAIL", "SHARE"), (14, 6, 8, 6), rows)
-    print("\n  Read this per kind. A high share on CASE or PROJECT means "
-          "resolution is\n  splitting one real thing across several nodes — "
-          "tune the threshold in\n  context/resolve.py or the normalization in "
-          "context/normalize.py.\n  A high share on DOCUMENT or TOPIC is "
-          "expected: an invoice or a serial\n  number genuinely appears once, "
-          "and that is not fragmentation.")
+    _table(("KIND", "KEYED ON", "NODES", "1-EMAIL", "SHARE"), (14, 8, 6, 8, 6), rows)
+    print("\n  Only the name-keyed kinds can fragment. An exact-keyed kind "
+          "(case, document,\n  person) is identified by a literal id or "
+          "address and never reaches the\n  similarity rung, so a one-email "
+          "node there means that id was genuinely\n  mentioned once — it is "
+          "data, not a defect.\n"
+          "\n  A high share on PROJECT is the signal worth acting on: it "
+          "means one real\n  project is split across several nodes. Tune "
+          "CONTAINMENT_THRESHOLD or\n  DEFAULT_THRESHOLD in "
+          "context/resolve.py, or the normalization in\n  "
+          "context/normalize.py. DELIVERABLE and TOPIC run high by nature — "
+          "they are\n  free-form spans, and a one-off deliverable really does "
+          "appear once.")
     return 0
 
 

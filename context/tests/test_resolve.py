@@ -232,6 +232,125 @@ class Rung3EmbeddingTest(unittest.TestCase):
         self.assertEqual(result.created, 1)
 
 
+class ContainmentRungTest(unittest.TestCase):
+    """The relaxed bar, and why it needs a second signal.
+
+    Real cosines from nomic-embed-text on the corpus: the pairs that should
+    merge run 0.688-0.936 and the pairs that must not top out at 0.575. A
+    single threshold low enough to catch the first group would rest on
+    fourteen hand-checked pairs; requiring containment as well is a
+    conjunction of two signals that fail differently.
+    """
+
+    def setUp(self):
+        self.group = entity(
+            EntityKind.PROJECT, "vantera safety group", "Vantera Safety Group"
+        )
+        self.index = EntityIndex.build(
+            [self.group], vectors={self.group.entity_id: vec(1, 0, 0, 0)}
+        )
+
+    def test_a_contained_key_merges_below_the_full_threshold(self):
+        """"Vantera" / "Vantera Safety Group" is 0.762 — under 0.86, and the
+        same project."""
+        result = resolve(
+            [mention("project:vantera", "Vantera")],
+            self.index,
+            embeddings={"project:vantera": vec(1, 0.85, 0, 0)},   # ~0.762
+        )
+        self.assertEqual(result.merged, 1)
+        self.assertEqual(result.mentions[0].entity_id, self.group.entity_id)
+
+    def test_containment_works_when_the_shared_words_are_at_the_end(self):
+        """"Lot 22B" sits at the END of "Anshun Lot 22B"; a prefix test misses it."""
+        lot = entity(EntityKind.PROJECT, "anshun lot 22b", "Anshun Lot 22B")
+        index = EntityIndex.build([lot], vectors={lot.entity_id: vec(1, 0, 0, 0)})
+        result = resolve(
+            [mention("project:lot 22b", "Lot 22B")],
+            index,
+            embeddings={"project:lot 22b": vec(1, 0.65, 0, 0)},
+        )
+        self.assertEqual(result.merged, 1)
+
+    def test_an_unrelated_name_is_still_rejected_at_the_relaxed_bar(self):
+        """"Bastion" / "Meridian" is 0.575 — the highest must-not-merge pair
+        measured, and it has no containment either."""
+        result = resolve(
+            [mention("project:meridian", "Meridian")],
+            self.index,
+            embeddings={"project:meridian": vec(1, 1.4, 0, 0)},    # ~0.58
+        )
+        self.assertEqual(result.merged, 0)
+        self.assertEqual(result.created, 1)
+
+    def test_containment_alone_is_not_enough(self):
+        """Both signals are required. Containment with a poor cosine does not
+        merge — that is the point of a conjunction."""
+        result = resolve(
+            [mention("project:vantera", "Vantera")],
+            self.index,
+            embeddings={"project:vantera": vec(1, 3, 0, 0)},       # ~0.32
+        )
+        self.assertEqual(result.merged, 0)
+
+    def test_a_short_key_may_not_swallow_a_long_one(self):
+        """Without a length floor, a two-letter fragment is a subsequence of
+        half the corpus."""
+        qa = entity(EntityKind.PROJECT, "qa release plan", "QA release plan")
+        index = EntityIndex.build([qa], vectors={qa.entity_id: vec(1, 0, 0, 0)})
+        # Cosine ~0.762: over the relaxed bar, under the full one. It merges
+        # only if containment applies, and for a two-letter key it must not.
+        result = resolve(
+            [mention("project:qa", "QA")],
+            index,
+            embeddings={"project:qa": vec(1, 0.85, 0, 0)},
+        )
+        self.assertEqual(result.merged, 0)
+
+    def test_contains_tokens_is_word_boundary_aware(self):
+        from context.resolve import contains_tokens
+
+        self.assertTrue(contains_tokens("vantera", "vantera safety group"))
+        self.assertTrue(contains_tokens("lot 22b", "anshun lot 22b"))
+        self.assertFalse(contains_tokens("api", "rapidly growing api"))
+        self.assertFalse(contains_tokens("safety vantera", "vantera safety group"))
+        self.assertFalse(contains_tokens("vantera", "vantera"))
+        self.assertFalse(contains_tokens("", "anything"))
+
+    def test_a_newly_created_entity_is_visible_to_the_next_mention(self):
+        """The bug this replaces: the index's vectors come from the database,
+        so on a first build every entity is created inside the loop and none is
+        ever visible to the next mention's similarity check. Rung 3 fired zero
+        times across two full corpus builds."""
+        result = resolve(
+            [
+                mention("project:vantera safety group", "Vantera Safety Group"),
+                mention("project:vantera", "Vantera", "e2"),
+            ],
+            embeddings={
+                "project:vantera safety group": vec(1, 0, 0, 0),
+                "project:vantera": vec(1, 0.85, 0, 0),
+            },
+        )
+        self.assertEqual(result.created, 1)
+        self.assertEqual(result.merged, 1)
+        self.assertEqual(
+            result.mentions[0].entity_id, result.mentions[1].entity_id
+        )
+
+    def test_ids_are_still_never_merged_by_either_bar(self):
+        """"CS-40350" contains no token of "CS-40351", but neither may reach
+        rung 3 at all."""
+        case = entity(EntityKind.CASE, "CS40350", "CS-40350")
+        index = EntityIndex.build([case], vectors={case.entity_id: vec(1, 0, 0, 0)})
+        result = resolve(
+            [mention("case:CS40350X", "CS-40350X")],
+            index,
+            embeddings={"case:CS40350X": vec(1, 0.01, 0, 0)},
+        )
+        self.assertEqual(result.merged, 0)
+
+
 class EntityFoldingTest(unittest.TestCase):
     def test_ids_are_stable_across_runs(self):
         """Content-derived ids make the whole pass idempotent, so persistence

@@ -49,6 +49,30 @@ from .normalize import normalize_id, normalize_name, parse_provisional
 # sign, not a success.
 DEFAULT_THRESHOLD = 0.86
 
+# A relaxed bar, used ONLY when a second, independent signal agrees: one key is
+# a whole-token subsequence of the other. Measured against the real corpus with
+# nomic-embed-text, the two populations separate cleanly:
+#
+#   should merge      "Bastion" / "Bastion charging dock"          0.688
+#                     "Flux" / "Flux launch"                       0.771
+#                     "Vantera" / "Vantera Safety Group"           0.762
+#                     "Lot 22B" / "Anshun Lot 22B"                 0.836
+#                     "Rev C" / "Rev C Qualification"              0.879
+#   must NOT merge    "Q3 offsite" / "September all-hands"         0.361
+#                     "Meridian" / "Vantera"                       0.367
+#                     "Bastion" / "Meridian"                       0.575
+#
+# Dropping the single threshold to 0.65 would catch all of the first group, but
+# on the strength of fourteen hand-checked pairs — and over-merging is this
+# layer's primary risk (PHASES-COMPLEX.md §10), so a lower bar on one signal is
+# the wrong trade. Requiring containment AND similarity is a conjunction of two
+# signals that fail in different ways: none of the must-not pairs has either.
+CONTAINMENT_THRESHOLD = 0.65
+
+# A key shorter than this may not swallow a longer one by containment. Without
+# it a two-letter fragment ("QA", "C") is a subsequence of half the corpus.
+MIN_CONTAINMENT_CHARS = 4
+
 # Kinds whose identity is a machine id. Never merged by embedding: "CS-40350"
 # and "CS-40351" are textually and semantically near-identical and are two
 # different cases. Only an exact key or a recorded alias may match these.
@@ -125,26 +149,54 @@ def _cosine(a: bytes, b: bytes) -> float:
     return cosine(a, b)
 
 
+def contains_tokens(shorter: str, longer: str) -> bool:
+    """Whether `shorter`'s words appear as a contiguous run inside `longer`.
+
+    Subsequence rather than prefix: "Lot 22B" sits at the END of "Anshun Lot
+    22B", and a prefix test would miss it. Word-boundary aware, so "api" does
+    not match "rapidly".
+    """
+    short_words, long_words = shorter.split(), longer.split()
+    if not short_words or len(short_words) >= len(long_words):
+        return False
+    if len(shorter) < MIN_CONTAINMENT_CHARS:
+        return False
+    return any(
+        long_words[i : i + len(short_words)] == short_words
+        for i in range(len(long_words) - len(short_words) + 1)
+    )
+
+
 def _best_vector_match(
     kind: EntityKind,
+    key: str,
     vector: bytes,
     index: EntityIndex,
     threshold: float,
 ) -> Optional[str]:
-    """The closest same-kind entity above `threshold`, or None.
+    """The closest same-kind entity that clears its bar, or None.
+
+    Two bars, not one. The full `threshold` applies to any pair of names; the
+    relaxed `CONTAINMENT_THRESHOLD` applies only when one key is a whole-token
+    subsequence of the other, which is an independent identity signal rather
+    than more of the same one.
 
     Brute force over the candidates of one kind. At this corpus size that is a
     few hundred comparisons; an index would be machinery for no gain.
     """
-    best_id, best_score = None, threshold
+    best_id, best_score = None, 0.0
     for entity_id, candidate in index.vectors.items():
         entity = index.by_id.get(entity_id)
         if entity is None or entity.kind != kind:
             continue
         if len(candidate) != len(vector):
             continue                       # different embedding model or dim
+        nested = contains_tokens(key, entity.normalized_key) or contains_tokens(
+            entity.normalized_key, key
+        )
+        bar = min(threshold, CONTAINMENT_THRESHOLD) if nested else threshold
         score = _cosine(vector, candidate)
-        if score >= best_score:
+        if score >= bar and score > best_score:
             best_id, best_score = entity_id, score
     return best_id
 
@@ -204,6 +256,15 @@ def resolve(
                 normalized_key=key,
             )
             index.add(entity)
+            # Register its vector too, or rung 3 is dead on a cold corpus: the
+            # index's vectors come from the database, so on a first build every
+            # entity is created in this loop and none of them is ever visible
+            # to the next mention's similarity check. "Vantera" and "Vantera
+            # Safety Group" both got created in one pass with a cosine of 0.762
+            # between them and nothing looking.
+            blob = embeddings.get(mention.entity_id)
+            if blob:
+                index.vectors[entity_id] = blob
 
         entity = _fold_mention(entity, mention, received_at.get(mention.email_id))
         touched[entity_id] = entity
@@ -259,7 +320,7 @@ def _match(
     #    cases, and two people at one company are not one person.
     vector = embeddings.get(mention.entity_id)
     if vector and kind not in _EXACT_ONLY_KINDS:
-        found = _best_vector_match(kind, vector, index, threshold)
+        found = _best_vector_match(kind, key, vector, index, threshold)
         if found:
             return found, "vector"
 
