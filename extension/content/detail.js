@@ -55,10 +55,28 @@
     panel = el("div", "ea-panel");
 
     const header = el("div", "ea-panel-header");
-    header.appendChild(el("span", "ea-panel-title", "Valence"));
+
+    // Title + collapse on one row, tabs on their own row beneath. Five tabs
+    // and the title no longer fit across a 340px panel on a single line.
+    const titleRow = el("div", "ea-panel-titlerow");
+    titleRow.appendChild(el("span", "ea-panel-title", "Valence"));
+
+    const toggle = el("button", "ea-toggle", "–");
+    toggle.addEventListener("click", () => {
+      panel.classList.toggle("ea-collapsed");
+      toggle.textContent = panel.classList.contains("ea-collapsed") ? "+" : "–";
+    });
+    titleRow.appendChild(toggle);
+    header.appendChild(titleRow);
 
     const tabs = el("div", "ea-tabs");
-    for (const [key, label] of [["email", "Email"], ["inbox", "Inbox"], ["ask", "Ask"], ["todo", "To-Do"]]) {
+    for (const [key, label] of [
+      ["email", "Email"],
+      ["inbox", "Inbox"],
+      ["ask", "Ask"],
+      ["todo", "To-Do"],
+      ["calendar", "Calendar"],
+    ]) {
       const tab = el("button", "ea-tab", label);
       tab.dataset.tab = key;
       tab.addEventListener("click", () => setTab(key));
@@ -66,19 +84,13 @@
     }
     header.appendChild(tabs);
 
-    const toggle = el("button", "ea-toggle", "–");
-    toggle.addEventListener("click", () => {
-      panel.classList.toggle("ea-collapsed");
-      toggle.textContent = panel.classList.contains("ea-collapsed") ? "+" : "–";
-    });
-    header.appendChild(toggle);
-
     panel.appendChild(header);
     panel.appendChild(el("div", "ea-panel-body"));
     panel.appendChild(el("div", "ea-panel-inbox"));
     const askPane = el("div", "ea-panel-ask");
     panel.appendChild(askPane);
     panel.appendChild(el("div", "ea-panel-todo"));
+    panel.appendChild(el("div", "ea-panel-calendar"));
     document.body.appendChild(panel);
 
     EmailAgentAsk.mount(askPane);
@@ -98,7 +110,9 @@
     panel.querySelector(".ea-panel-inbox").hidden = key !== "inbox";
     panel.querySelector(".ea-panel-ask").hidden = key !== "ask";
     panel.querySelector(".ea-panel-todo").hidden = key !== "todo";
+    panel.querySelector(".ea-panel-calendar").hidden = key !== "calendar";
     if (key === "todo") renderTodo();
+    if (key === "calendar") renderCalendar();
   }
 
   function showMessage(text) {
@@ -523,6 +537,130 @@
       check.disabled = false;
       row.classList.remove("ea-todo-completing");
     }
+  }
+
+  // --- Calendar tab: the user's own agenda, independent of any open email ----
+  // The per-email sections (above) show calendar context for one message; this
+  // is the whole window, read through GET /api/calendar.
+  const CALENDAR_DAYS = 7;
+
+  // All-day events are serialized as UTC midnight, so reading them in local
+  // time would shift them a day west of UTC. Read those off the UTC parts.
+  function eventDate(event) {
+    const parsed = new Date(event.start);
+    if (!event.allDay) return parsed;
+    return new Date(parsed.getUTCFullYear(), parsed.getUTCMonth(), parsed.getUTCDate());
+  }
+
+  function dayKey(date) {
+    return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+  }
+
+  function dayLabel(date) {
+    const label = date.toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" });
+    return dayKey(date) === dayKey(new Date()) ? `Today — ${label}` : label;
+  }
+
+  // Times only: these rows sit under a day heading, so formatSlot's repeated
+  // date would be noise here.
+  function formatTimeRange(event) {
+    const opts = { hour: "numeric", minute: "2-digit" };
+    const start = new Date(event.start).toLocaleTimeString(undefined, opts);
+    const end = new Date(event.end).toLocaleTimeString(undefined, opts);
+    return `${start} – ${end}`;
+  }
+
+  async function renderCalendar(force = false) {
+    if (!panel) return;
+    const wrap = panel.querySelector(".ea-panel-calendar");
+    wrap.replaceChildren(el("div", "ea-empty", "Loading your calendar…"));
+
+    const result = await EmailAgent.getCalendar(CALENDAR_DAYS, { force });
+    if (activeTab !== "calendar") return; // user switched tabs mid-fetch
+    if (!result?.ok) {
+      wrap.replaceChildren(
+        el("div", "ea-empty", result?.data?.detail || "Couldn't read your calendar — is the backend running?")
+      );
+      return;
+    }
+
+    const data = result.data || {};
+    // Anything without a start can't be placed on the agenda.
+    const confirmed = (data.events || [])
+      .filter((event) => event.start)
+      .map((event) => ({ ...event, proposal: null }));
+
+    // Events the pipeline extracted from emails but nobody has approved yet.
+    // They are NOT on Google Calendar, so they're shown alongside real events
+    // and clearly marked -- an empty agenda with 62 pending proposals sitting
+    // invisible behind it is the wrong picture of the week.
+    const windowEnd = new Date(data.rangeEnd || 0).getTime();
+    const now = Date.now();
+    const proposals = [];
+    for (const email of EmailAgent.allEmails()) {
+      if (email.proposedEventStatus !== "suggested" || !email.proposedEvent?.start) continue;
+      const start = new Date(email.proposedEvent.start).getTime();
+      // Forward-looking, same as the confirmed window: a proposal for a date
+      // that has already passed is stale, not upcoming.
+      if (start < now || (windowEnd && start > windowEnd)) continue;
+      proposals.push({
+        summary: email.proposedEvent.title,
+        start: email.proposedEvent.start,
+        end: email.proposedEvent.end,
+        allDay: false,
+        proposal: email,
+      });
+    }
+
+    const events = [...confirmed, ...proposals].sort(
+      (a, b) => new Date(a.start) - new Date(b.start)
+    );
+    wrap.replaceChildren();
+
+    const bar = el("div", "ea-cal-bar");
+    const counts = `${confirmed.length} scheduled` + (proposals.length ? ` · ${proposals.length} proposed` : "");
+    bar.appendChild(el("span", "ea-cal-range", `Next ${CALENDAR_DAYS} days · ${counts}`));
+    const refresh = el("button", "ea-button ea-button-quiet", "Refresh");
+    refresh.addEventListener("click", () => renderCalendar(true));
+    bar.appendChild(refresh);
+    wrap.appendChild(bar);
+
+    if (!events.length) {
+      wrap.appendChild(el("div", "ea-empty", "Nothing scheduled in this window."));
+      return;
+    }
+
+    let currentDay = null;
+    let list = null;
+    for (const event of events) {
+      const date = eventDate(event);
+      if (dayKey(date) !== currentDay) {
+        currentDay = dayKey(date);
+        wrap.appendChild(el("div", "ea-cal-day", dayLabel(date)));
+        list = el("div", "ea-cal-list");
+        wrap.appendChild(list);
+      }
+      list.appendChild(calendarRow(event));
+    }
+  }
+
+  function calendarRow(event) {
+    const row = el("div", "ea-cal-row");
+    row.appendChild(el("span", "ea-cal-time", event.allDay ? "All day" : formatTimeRange(event)));
+    row.appendChild(el("span", "ea-cal-title", event.summary || "(busy)"));
+    if (!event.proposal) return row;
+
+    // Proposed: not on the calendar until the user approves it in the Email
+    // tab, which is the only place that write happens.
+    row.classList.add("ea-cal-row-proposed");
+    const tag = el("span", "ea-cal-tag", "proposed");
+    tag.title = "Extracted from an email — not on your calendar yet. Click to review it.";
+    row.appendChild(tag);
+    row.addEventListener("click", () => {
+      location.hash = `#all/${event.proposal.threadId}`;
+      setTab("email");
+    });
+    return row;
   }
 
   // --- track which message is open -------------------------------------------

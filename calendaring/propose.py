@@ -161,9 +161,29 @@ def _parse_iso(value: str):
 
 
 def _clean_attendees(raw_attendees: Optional[List[str]], sender: str) -> List[str]:
-    attendees = [a.strip() for a in (raw_attendees or []) if a and a.strip()]
+    """Bare email addresses only, de-duplicated, first-appearance order.
+
+    The model routinely answers with display names ("Ronith") and the sender
+    arrives header-decorated ("Name <addr@host>"). Google's attendee list
+    takes bare addresses and rejects the ENTIRE insert with
+    "Invalid attendee email." if any one entry isn't one, so a single name
+    used to sink the whole event. Anything without a parseable address is
+    dropped rather than passed through.
+
+    `find_addresses` is reused instead of adding another address parser —
+    `context/normalize.py` makes the same call for the same reason.
+    """
+    from context.extract import find_addresses
+
     # The sender proposed or confirmed the meeting, so they belong on the
     # invite even if the model didn't repeat their address back.
-    if sender and sender not in attendees:
-        attendees.append(sender)
+    candidates = list(raw_attendees or [])
+    if sender:
+        candidates.append(sender)
+
+    attendees: List[str] = []
+    for candidate in candidates:
+        for address in find_addresses(candidate or ""):
+            if address not in attendees:
+                attendees.append(address)
     return attendees

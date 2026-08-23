@@ -1,11 +1,17 @@
 """Writing to Google Calendar: creating, editing, and cancelling one event.
 
 The only place in the repo that calls `events().insert/patch/delete(...)`.
-Every function here is reachable from exactly one place — a human-triggered
-route in `api/main.py` — never the pipeline; see `PHASES.md` Phase 1B and
-`calendaring/config.py`'s scope comment for why that separation matters (the
-write OAuth scope was granted early, but the write code paths stayed gated
-behind human action).
+
+`create_event` has two callers: the human-triggered approve route in
+`api/main.py`, and — when `config.AUTO_ADD_EVENTS` is on — the batch pipeline
+via `Pipeline._maybe_auto_add`. The pipeline path is newer: writes used to be
+gated behind human action only (see `PHASES.md` Phase 1B and
+`calendaring/config.py`'s scope comment), and setting CALENDAR_AUTO_ADD=0
+restores that. `update_event`/`delete_event` remain human-triggered only.
+
+Invitation emails are never sent unless a caller explicitly passes
+`send_updates`: attendees come out of a model reading email text, so mailing
+whatever it produced is a side effect the user never asked for.
 
 `create_event` never raises — it returns the (unchanged) `ProposedEvent` with
 `error` set, so the approve endpoint can persist a FAILED status without a
@@ -43,8 +49,19 @@ def _event_body(proposed: ProposedEvent, timezone_name: str) -> dict:
         "start": {"dateTime": to_rfc3339(proposed.start), "timeZone": timezone_name},
         "end": {"dateTime": to_rfc3339(proposed.end), "timeZone": timezone_name},
     }
+    # Re-filtered here, not just at extraction: rows written before
+    # `_clean_attendees` validated addresses still hold display names, and one
+    # bad entry makes Google reject the whole insert.
     if proposed.attendees:
-        body["attendees"] = [{"email": email} for email in proposed.attendees]
+        from context.extract import find_addresses
+
+        valid = []
+        for candidate in proposed.attendees:
+            for address in find_addresses(candidate or ""):
+                if address not in valid:
+                    valid.append(address)
+        if valid:
+            body["attendees"] = [{"email": address} for address in valid]
     if proposed.location:
         body["location"] = proposed.location
     if proposed.description:
@@ -57,6 +74,7 @@ def create_event(
     service=None,
     calendar_id: str = "primary",
     timezone_name: Optional[str] = None,
+    send_updates: str = "none",
 ) -> ProposedEvent:
     """Create `proposed` on Google Calendar and return the result.
 
@@ -90,8 +108,14 @@ def create_event(
         get_timezone(timezone_name)
 
         body = _event_body(proposed, timezone_name)
+        # sendUpdates defaults to "none": attendees are extracted from email
+        # text by a model, so mailing a meeting invitation to whatever it
+        # produced is a side effect the user never asked for. Callers that do
+        # want invitations sent must say so explicitly.
         created = with_retry(
-            lambda: service.events().insert(calendarId=calendar_id, body=body).execute(),
+            lambda: service.events()
+            .insert(calendarId=calendar_id, body=body, sendUpdates=send_updates)
+            .execute(),
             description="events.insert({0})".format(calendar_id),
             max_retries=config.MAX_RETRIES,
         )

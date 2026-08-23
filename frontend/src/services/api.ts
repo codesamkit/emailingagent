@@ -1,4 +1,4 @@
-import { EmailItem, FilterOptions, InboxStats, TodoItem } from '../types/email';
+import { CalendarWindow, EmailItem, FilterOptions, InboxStats, TodoItem } from '../types/email';
 import { MOCK_EMAILS } from './mockData';
 
 const BASE_URL = '/api';
@@ -280,6 +280,32 @@ export const api = {
       return await res.json();
     } catch {
       return { total: localTodos.length, todos: localTodos };
+    }
+  },
+
+  /** The user's real calendar window. Deliberately does NOT fall back to
+   *  sample events the way the email endpoints do: a calendar that silently
+   *  shows fabricated meetings is worse than one that says it's offline. */
+  async getCalendar(days = 30): Promise<CalendarWindow> {
+    const empty = {
+      rangeStart: null,
+      rangeEnd: null,
+      events: [],
+      busyBlocks: [],
+      suggestedSlots: [],
+      eventCount: 0,
+    };
+    try {
+      const res = await fetch(`${BASE_URL}/calendar?days=${days}`, {
+        signal: AbortSignal.timeout(8000), // a cold Google call is slower than a DB read
+      });
+      if (!res.ok) {
+        const detail = await res.json().catch(() => null);
+        return { connected: false, error: detail?.detail || `Request failed (${res.status})`, ...empty };
+      }
+      return { connected: true, ...empty, ...(await res.json()) };
+    } catch {
+      return { connected: false, error: 'Backend unreachable.', ...empty };
     }
   },
 

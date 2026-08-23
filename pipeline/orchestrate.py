@@ -32,7 +32,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field as dc_field, replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from models.schema import (
@@ -136,6 +136,7 @@ class Pipeline:
         scheduling_gate: Optional[Callable] = None,
         calendar_context: Optional[Callable] = None,
         propose_event: Optional[Callable] = None,
+        create_event: Optional[Callable] = None,
         outline: Optional[Callable] = None,
         chunk: Optional[Callable] = None,
         embed: Optional[Callable] = None,
@@ -154,6 +155,10 @@ class Pipeline:
         self._scheduling_gate = scheduling_gate
         self._calendar_context = calendar_context
         self._propose_event = propose_event
+        # Injected like every other stage callable, and for the same reason:
+        # left None (a bare Pipeline(), i.e. every test that doesn't ask for
+        # it) auto-add is a no-op, so no test can reach Google Calendar.
+        self._create_event = create_event
         self._outline = outline
         self.stages = tuple(stages if stages is not None else STAGES)
         self.calendar_window_days = calendar_window_days
@@ -170,6 +175,7 @@ class Pipeline:
         libraries just to read a stored row.
         """
         from calendaring.context import get_calendar_context
+        from calendaring.events import create_event
         from calendaring.propose import extract_proposed_event
         from calendaring.scheduling_intent import is_scheduling_related
         from classification.categorize import categorize_topic
@@ -198,6 +204,7 @@ class Pipeline:
             scheduling_gate=is_scheduling_related,
             calendar_context=get_calendar_context,
             propose_event=extract_proposed_event,
+            create_event=create_event,
             outline=generate_reply_outline,
             stages=stages,
             **kwargs,
@@ -342,6 +349,7 @@ class Pipeline:
             )
             if proposed is not None:
                 record.proposed_event, record.proposed_event_status = proposed
+                self._maybe_auto_add(record, now)
 
         outlined = self._run_stage(
             "outline", raw.email_id, self._outline, record, raw
@@ -360,6 +368,63 @@ class Pipeline:
 
         record.processed_at = now or datetime.now(timezone.utc)
         return record
+
+    def _maybe_auto_add(self, record, now: Optional[datetime] = None) -> None:
+        """Create a freshly extracted event on Calendar without a human click.
+
+        Gated on `calendaring.config.AUTO_ADD_EVENTS`. This is the one place
+        the batch pipeline writes to Calendar -- the original rule was that
+        only a human click ever did (see `calendaring/events.py`'s module
+        docstring and `approve_calendar_event`), and turning it off restores
+        that.
+
+        Only plausible meetings are auto-added: extraction still emits past
+        dates and multi-day spans, so anything failing those checks stays
+        SUGGESTED for a person to decide rather than landing on a real
+        calendar. A failed create becomes FAILED, which the extension already
+        renders with a Retry button.
+        """
+        from calendaring import config as calendar_config
+
+        if self._create_event is None or not calendar_config.AUTO_ADD_EVENTS:
+            return
+        event = record.proposed_event
+        if event is None or record.proposed_event_status != ProposedEventStatus.SUGGESTED:
+            return
+        if event.start is None or event.end is None:
+            return
+
+        now = now or datetime.now(timezone.utc)
+        if event.start < now:
+            log.info(
+                "email_id=%s: not auto-adding %r - starts in the past",
+                record.email_id,
+                event.title,
+            )
+            return
+        if event.end - event.start > timedelta(hours=calendar_config.AUTO_ADD_MAX_HOURS):
+            log.info(
+                "email_id=%s: not auto-adding %r - spans %s, over the %sh limit",
+                record.email_id,
+                event.title,
+                event.end - event.start,
+                calendar_config.AUTO_ADD_MAX_HOURS,
+            )
+            return
+
+        result = self._create_event(event)
+        record.proposed_event = result
+        if result.google_event_id is None:
+            record.proposed_event_status = ProposedEventStatus.FAILED
+            log.warning(
+                "email_id=%s: auto-add failed for %r: %s",
+                record.email_id,
+                event.title,
+                result.error,
+            )
+            return
+        record.proposed_event_status = ProposedEventStatus.APPROVED
+        log.info("email_id=%s: auto-added %r to Calendar", record.email_id, event.title)
 
     def _fetch_calendar(self, now: Optional[datetime] = None):
         """One calendar window shared by every scheduling email in a run."""

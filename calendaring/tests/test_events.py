@@ -58,6 +58,29 @@ class TestSuccess:
         assert body["location"] == "Room 2"
         assert service.insert_calls[0]["calendarId"] == "primary"
 
+    def test_no_invitation_emails_are_sent_by_default(self):
+        """Attendees are extracted from email text by a model, so mailing an
+        invitation to whatever it produced is a side effect nobody asked for."""
+        service = FakeCalendarService(insert_responses=[{"id": "x"}])
+        create_event(proposed(), service=service, timezone_name="UTC")
+        assert service.insert_calls[0]["sendUpdates"] == "none"
+
+    def test_attendees_that_are_not_addresses_are_dropped_from_the_body(self):
+        """Rows persisted before extraction validated addresses still hold
+        display names, and one bad entry makes Google reject the whole insert."""
+        service = FakeCalendarService(insert_responses=[{"id": "x"}])
+        create_event(
+            proposed(attendees=["Ronith", "Dana Reed <dana@example.com>"]),
+            service=service,
+            timezone_name="UTC",
+        )
+        assert service.insert_calls[0]["body"]["attendees"] == [{"email": "dana@example.com"}]
+
+    def test_body_omits_attendees_when_none_are_valid(self):
+        service = FakeCalendarService(insert_responses=[{"id": "x"}])
+        create_event(proposed(attendees=["Ronith"]), service=service, timezone_name="UTC")
+        assert "attendees" not in service.insert_calls[0]["body"]
+
     def test_no_attendees_or_location_are_omitted_from_the_body(self):
         service = FakeCalendarService(insert_responses=[{"id": "x"}])
         create_event(

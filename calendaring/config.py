@@ -94,6 +94,19 @@ CREDENTIALS_FILE = _path("CALENDAR_CREDENTIALS_FILE", _discover_credentials())
 # them separate means re-consenting to Calendar never invalidates Gmail access.
 TOKEN_FILE = _path("CALENDAR_TOKEN_FILE", PACKAGE_DIR / "data" / "calendar_token.json")
 
+# --- Auto-add ---------------------------------------------------------------
+# When true, the pipeline creates an extracted event on Google Calendar itself
+# instead of parking it as SUGGESTED for a human click. This REVERSES the
+# original "only a human click ever writes to Calendar" rule (see the module
+# docstring in events.py and `approve_calendar_event` in api/main.py) and is a
+# deliberate product choice -- set CALENDAR_AUTO_ADD=0 to get the old flow.
+AUTO_ADD_EVENTS = _bool("CALENDAR_AUTO_ADD", True)
+# Auto-add only applies to plausible meetings. Extraction currently emits
+# multi-day spans (a 13-day "qualification update") and dates already past;
+# anything failing these stays SUGGESTED so a human still decides, rather than
+# silently landing junk on a real calendar.
+AUTO_ADD_MAX_HOURS = _int("CALENDAR_AUTO_ADD_MAX_HOURS", 24)
+
 # --- Window ----------------------------------------------------------------
 DEFAULT_WINDOW_DAYS = _int("CALENDAR_WINDOW_DAYS", 7)
 CALENDAR_IDS = [

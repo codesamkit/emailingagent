@@ -61,8 +61,10 @@ class FakeEvents:
         self._owner.events_calls.append(kwargs)
         return _Request(self._owner._next(self._owner.events_responses))
 
-    def insert(self, calendarId: str, body: Dict[str, Any]):
-        self._owner.insert_calls.append({"calendarId": calendarId, "body": body})
+    def insert(self, calendarId: str, body: Dict[str, Any], sendUpdates: str = "none"):
+        self._owner.insert_calls.append(
+            {"calendarId": calendarId, "body": body, "sendUpdates": sendUpdates}
+        )
         return _Request(self._owner._next(self._owner.insert_responses))
 
     def patch(self, calendarId: str, eventId: str, body: Dict[str, Any]):

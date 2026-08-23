@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 from models.schema import (
@@ -395,3 +396,79 @@ class TestPersistenceRoundTrip:
             "nope", ProposedEventStatus.DECLINED, db_path=tmp_path / "t.db"
         )
 
+
+class TestAutoAdd:
+    """`CALENDAR_AUTO_ADD` makes the pipeline create the event itself instead
+    of parking it as SUGGESTED for a human click. The creator is injected like
+    every other stage callable, so a pipeline without one never reaches
+    Calendar -- without that, running the suite writes real events to a real
+    calendar.
+    """
+
+    def _proposed(self, start=None, end=None):
+        start = start if start is not None else NOW + timedelta(days=1)
+        return ProposedEvent(
+            title="Sync", start=start, end=end if end is not None else start + timedelta(minutes=30)
+        )
+
+    def _pipeline(self, proposed, creator):
+        return full_pipeline(
+            scheduling_gate=lambda e: True,
+            propose_event=lambda p, r: (proposed, ProposedEventStatus.SUGGESTED),
+            create_event=creator,
+        )
+
+    def test_no_creator_injected_means_no_calendar_call(self):
+        result = full_pipeline(
+            scheduling_gate=lambda e: True,
+            propose_event=lambda p, r: (self._proposed(), ProposedEventStatus.SUGGESTED),
+        ).process_one(raw(), now=NOW)
+        assert result.proposed_event_status == ProposedEventStatus.SUGGESTED
+
+    def test_auto_adds_and_marks_approved(self):
+        calls = []
+
+        def creator(event):
+            calls.append(event)
+            return replace(event, google_event_id="gcal-1")
+
+        result = self._pipeline(self._proposed(), creator).process_one(raw(), now=NOW)
+        assert len(calls) == 1
+        assert result.proposed_event_status == ProposedEventStatus.APPROVED
+        assert result.proposed_event.google_event_id == "gcal-1"
+
+    def test_a_failed_create_is_recorded_as_failed(self):
+        def creator(event):
+            return replace(event, google_event_id=None, error="quota exceeded")
+
+        result = self._pipeline(self._proposed(), creator).process_one(raw(), now=NOW)
+        assert result.proposed_event_status == ProposedEventStatus.FAILED
+        assert result.proposed_event.error == "quota exceeded"
+
+    def test_past_events_are_left_for_a_human(self):
+        """Extraction still emits dates that have already passed -- 16 of the
+        62 proposals in the demo mailbox. Auto-adding those is noise."""
+        calls = []
+        proposed = self._proposed(start=NOW - timedelta(days=3))
+        result = self._pipeline(proposed, lambda e: calls.append(e)).process_one(raw(), now=NOW)
+        assert calls == []
+        assert result.proposed_event_status == ProposedEventStatus.SUGGESTED
+
+    def test_multi_day_spans_are_left_for_a_human(self):
+        """A 13-day "meeting" is an extraction artifact, not a calendar entry."""
+        calls = []
+        proposed = self._proposed(start=NOW + timedelta(days=1), end=NOW + timedelta(days=14))
+        result = self._pipeline(proposed, lambda e: calls.append(e)).process_one(raw(), now=NOW)
+        assert calls == []
+        assert result.proposed_event_status == ProposedEventStatus.SUGGESTED
+
+    def test_disabled_by_config(self, monkeypatch):
+        from calendaring import config as calendar_config
+
+        monkeypatch.setattr(calendar_config, "AUTO_ADD_EVENTS", False)
+        calls = []
+        result = self._pipeline(self._proposed(), lambda e: calls.append(e)).process_one(
+            raw(), now=NOW
+        )
+        assert calls == []
+        assert result.proposed_event_status == ProposedEventStatus.SUGGESTED

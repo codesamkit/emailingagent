@@ -28,12 +28,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
+from calendaring import config as calendar_config
 from models.schema import ProposedEventStatus, ReplyOutlineStatus
 from pipeline import persist
 
 from .auth import require_token
 from .filters import SORT_FIELDS, apply_filters, sort_emails
-from .serializers import email_to_json, emails_to_json, todo_to_json
+from .serializers import calendar_to_json, email_to_json, emails_to_json, todo_to_json
 
 log = logging.getLogger(__name__)
 
@@ -358,7 +359,10 @@ def approve_calendar_event(email_id: str) -> Dict[str, Any]:
     """Create the proposed event on Google Calendar.
 
     The only HTTP-reachable path that writes to Calendar, and it only runs in
-    direct response to this human click — never from the batch pipeline.
+    direct response to this human click. The pipeline can also create events
+    on its own when `calendaring.config.AUTO_ADD_EVENTS` is on, in which case
+    an email arrives here already APPROVED and this route is the retry path
+    for the ones auto-add deliberately skipped (past dates, multi-day spans).
     SUGGESTED (first attempt) and FAILED (the review UI's Retry button) are
     both acceptable starting states; APPROVED or DECLINED are not — the same
     correctness-over-convenience rule `edit_outline` applies to outlines: a
@@ -530,6 +534,42 @@ def cancel_calendar_event(email_id: str) -> Dict[str, Any]:
     cleared = replace(proposed, google_event_id=None, error=None)
     persist.update_proposed_event_status(email_id, ProposedEventStatus.DECLINED, cleared, DB_PATH)
     return email_to_json(persist.get(email_id, DB_PATH), include_calendar=True)
+
+
+@app.get("/api/calendar", dependencies=[Depends(require_token)])
+def get_calendar(
+    days: int = Query(
+        calendar_config.DEFAULT_WINDOW_DAYS,
+        ge=1,
+        le=30,
+        description="Days to look ahead. Bounded so one request can't fan out into a huge Calendar fetch.",
+    )
+) -> Dict[str, Any]:
+    """The user's own calendar for the next `days` days, independent of any
+    email.
+
+    Read-only, and deliberately a thin wrapper: `get_calendar_context` already
+    builds its own service and fetches busy blocks + expanded recurrences, and
+    `calendar_to_json` already emits the shape the extension's per-email
+    calendar section renders. Nothing here re-implements either.
+    """
+    from googleapiclient.errors import HttpError
+
+    from calendaring.context import get_calendar_context
+
+    try:
+        context = get_calendar_context(days=days)
+    except HttpError as exc:
+        raise _calendar_http_error(exc)
+    except Exception as exc:  # missing/expired token, no network, bad config
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Could not read your calendar ({0}). Run `python -m "
+                "calendaring.cli auth` if this is the first run.".format(exc)
+            ),
+        )
+    return calendar_to_json(context)
 
 
 class AgentChatBody(BaseModel):

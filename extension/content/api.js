@@ -5,6 +5,7 @@
 const EmailAgent = (() => {
   const INDEX_REFRESH_MS = 60_000; // re-read the processed-email index
   const PIPELINE_REFRESH_MS = 120_000; // ingest + process new mail via the backend
+  const CALENDAR_TTL_MS = 300_000; // reuse a calendar read for 5 minutes
 
   // threadId -> email summary row, emailId -> email summary row
   const byThread = new Map();
@@ -12,6 +13,7 @@ const EmailAgent = (() => {
   let lastRefresh = 0;
   let backendReachable = null; // null = unknown, then true/false
   let pipelineRunning = false;
+  let calendarCache = null; // { days, at, result } -- see getCalendar below
   const refreshListeners = [];
 
   function call(path, method = "GET", body = null) {
@@ -89,8 +91,25 @@ const EmailAgent = (() => {
     // To-do list: extracted action items + "needs a reply" markers.
     getTodos: () => call("/api/todos"),
     completeTodo: (todoId) => call(`/api/todos/${encodeURIComponent(todoId)}/complete`, "POST"),
-    // Human-approval flow for proposed calendar events. Approve is the one
-    // call that writes to Google Calendar — only ever fired by a user click.
+    // The user's whole calendar for the Calendar tab. Every call hits the
+    // Google Calendar API server-side, so a successful read is cached briefly
+    // -- switching tabs shouldn't re-fetch. `force` is the Refresh button.
+    getCalendar: async (days = 7, { force = false } = {}) => {
+      const fresh =
+        calendarCache &&
+        calendarCache.days === days &&
+        Date.now() - calendarCache.at < CALENDAR_TTL_MS;
+      if (fresh && !force) return calendarCache.result;
+
+      const result = await call(`/api/calendar?days=${days}`);
+      // Only cache successes: a failure should be retried, not remembered.
+      if (result?.ok) calendarCache = { days, at: Date.now(), result };
+      return result;
+    },
+    // Human-approval flow for proposed calendar events. With auto-add on
+    // (CALENDAR_AUTO_ADD, the default) the pipeline creates plausible events
+    // itself, so these are the path for the ones it skipped — past dates and
+    // multi-day spans — plus retries after a failure.
     approveEvent: (emailId) =>
       call(`/api/emails/${encodeURIComponent(emailId)}/calendar-event/approve`, "POST"),
     declineEvent: (emailId) =>

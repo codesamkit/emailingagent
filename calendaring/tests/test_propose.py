@@ -110,10 +110,35 @@ class TestConcreteMeetingIsExtracted:
         assert event.end == datetime(2026, 8, 27, 14, 30, tzinfo=UTC)
         assert len(client.calls) == 1
 
-    def test_sender_is_added_as_an_attendee(self):
+    def test_sender_is_added_as_an_attendee_as_a_bare_address(self):
+        """The sender arrives header-decorated ("Name <addr>"), but Google's
+        attendee list takes bare addresses and rejects the whole insert if any
+        entry isn't one."""
         client = FakeClient()
         event, _ = extract_proposed_event(processed(), raw(), client=client)
-        assert "Dana Reed <dana@example.com>" in event.attendees
+        assert event.attendees == ["dana@example.com"]
+
+    def test_attendees_that_are_not_addresses_are_dropped(self):
+        """The model routinely answers with display names. One of those used to
+        fail the entire event with "Invalid attendee email."."""
+        client = FakeClient({
+            "found": True, "title": "Sync", "attendees": ["Ronith", "priya@example.com"],
+            "start": "2026-08-27T14:00:00+00:00", "end": "2026-08-27T14:30:00+00:00",
+            "location": "",
+        })
+        event, _ = extract_proposed_event(processed(), raw(), client=client)
+        assert "Ronith" not in event.attendees
+        assert event.attendees == ["priya@example.com", "dana@example.com"]
+
+    def test_duplicate_addresses_are_collapsed(self):
+        client = FakeClient({
+            "found": True, "title": "Sync",
+            "attendees": ["dana@example.com", "Dana Reed <dana@example.com>"],
+            "start": "2026-08-27T14:00:00+00:00", "end": "2026-08-27T14:30:00+00:00",
+            "location": "",
+        })
+        event, _ = extract_proposed_event(processed(), raw(), client=client)
+        assert event.attendees == ["dana@example.com"]
 
     def test_explicit_attendees_are_kept(self):
         client = FakeClient({
@@ -123,7 +148,7 @@ class TestConcreteMeetingIsExtracted:
         })
         event, _ = extract_proposed_event(processed(), raw(), client=client)
         assert "priya@example.com" in event.attendees
-        assert "Dana Reed <dana@example.com>" in event.attendees
+        assert "dana@example.com" in event.attendees
 
     def test_location_is_passed_through(self):
         client = FakeClient({

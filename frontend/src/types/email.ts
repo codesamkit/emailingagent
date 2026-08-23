@@ -70,6 +70,31 @@ export interface TodoItem {
   importanceLevel: ImportanceLevel | null;
 }
 
+export interface CalendarEvent {
+  summary: string | null;
+  start: string | null;
+  end: string | null;
+  allDay: boolean;
+}
+
+export interface CalendarSlotRange {
+  start: string;
+  end: string;
+}
+
+/** GET /api/calendar. `connected` is false when the backend or the Google
+ *  token is unavailable — the view says so rather than showing placeholders. */
+export interface CalendarWindow {
+  connected: boolean;
+  error?: string;
+  rangeStart: string | null;
+  rangeEnd: string | null;
+  events: CalendarEvent[];
+  busyBlocks: CalendarSlotRange[];
+  suggestedSlots: CalendarSlotRange[];
+  eventCount: number;
+}
+
 export interface InboxStats {
   total: number;
   unread: number;

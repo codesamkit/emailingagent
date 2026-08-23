@@ -422,6 +422,75 @@ class TestExpandDraft:
         assert client.post("/api/emails/nope/expand").status_code == 404
 
 
+class TestGetCalendar:
+    """GET /api/calendar -- the whole-window read behind the extension's
+    Calendar tab. The Google call is stubbed; what's under test is the route's
+    bounds checking, error mapping, and that it reuses calendar_to_json."""
+
+    def _context(self):
+        start = datetime(2026, 8, 24, 9, 0, tzinfo=timezone.utc)
+        return CalendarContext(
+            range_start=start,
+            range_end=start + timedelta(days=7),
+            busy_blocks=[CalendarSlot(start=start, end=start + timedelta(minutes=30))],
+            existing_events=[
+                {
+                    "summary": "Standup",
+                    "start": start,
+                    "end": start + timedelta(minutes=30),
+                    "all_day": False,
+                }
+            ],
+            suggested_slots=[],
+        )
+
+    def test_returns_the_serialized_window(self, client, monkeypatch):
+        from calendaring import context as context_module
+
+        monkeypatch.setattr(
+            context_module, "get_calendar_context", lambda **kwargs: self._context()
+        )
+        response = client.get("/api/calendar?days=7")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["eventCount"] == 1
+        assert body["events"][0]["summary"] == "Standup"
+        assert body["events"][0]["allDay"] is False
+        assert len(body["busyBlocks"]) == 1
+
+    def test_days_is_passed_through(self, client, monkeypatch):
+        from calendaring import context as context_module
+
+        seen = {}
+
+        def fake(**kwargs):
+            seen.update(kwargs)
+            return self._context()
+
+        monkeypatch.setattr(context_module, "get_calendar_context", fake)
+        client.get("/api/calendar?days=3")
+        assert seen["days"] == 3
+
+    @pytest.mark.parametrize("days", [0, 31, -1])
+    def test_days_is_bounded(self, client, days):
+        """Rejected before any Google call -- one request must not be able to
+        fan out into an unbounded Calendar fetch."""
+        assert client.get("/api/calendar?days={0}".format(days)).status_code == 422
+
+    def test_unreadable_calendar_is_503_not_500(self, client, monkeypatch):
+        """A missing or expired token is a "go re-auth" condition, so it must
+        surface as an actionable message rather than an opaque server error."""
+        from calendaring import context as context_module
+
+        def boom(**kwargs):
+            raise RuntimeError("no token")
+
+        monkeypatch.setattr(context_module, "get_calendar_context", boom)
+        response = client.get("/api/calendar")
+        assert response.status_code == 503
+        assert "calendaring.cli auth" in response.json()["detail"]
+
+
 class TestApproveCalendarEvent:
     def test_approve_creates_the_event_and_persists_the_id(self, client, monkeypatch):
         from calendaring import events as events_module
