@@ -346,6 +346,8 @@ def expand_draft(
         )
     except NotYetImplementedError as exc:
         raise HTTPException(status_code=501, detail=str(exc))
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail="LLM provider unavailable: {0}".format(exc))
 
     persist.update_draft(email_id, draft, DB_PATH)
     return {"emailId": email_id, "draft": draft}

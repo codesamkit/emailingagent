@@ -505,6 +505,8 @@ def _draft_reply(args: Dict[str, Any], db_path: Optional[Any]) -> Dict[str, Any]
         draft = expand_outline_to_full_draft(email_id, outline=outline)
     except NotYetImplementedError as exc:
         return {"error": str(exc)}
+    except RuntimeError as exc:
+        return {"error": str(exc)}
     return {"email_id": email_id, "draft": draft}
 
 
