@@ -23,6 +23,16 @@ class NotYetImplementedError(NotImplementedError):
 
 MAX_BODY_CHARS = 4000  # same bound as outline generation
 
+TONES = ("professional", "concise", "direct", "warm")
+DEFAULT_TONE = "professional"
+
+_TONE_INSTRUCTIONS = {
+    "professional": "Write in a polished, professional tone.",
+    "concise": "Write as briefly as possible — short sentences, no filler, still complete.",
+    "direct": "Write plainly and to the point, with minimal pleasantries.",
+    "warm": "Write in a warm, friendly tone while staying professional.",
+}
+
 SYSTEM_PROMPT = (
     "You write the full text of a reply email from a short outline. Each "
     "outline bullet is one point the reply must make; turn each bullet into "
@@ -96,6 +106,7 @@ def expand_outline_to_full_draft(
     email_id: str,
     outline: Optional[List[str]] = None,
     client: Optional[Any] = None,
+    tone: str = DEFAULT_TONE,
 ) -> str:
     """Expand a reply outline into full prose the user can send or edit.
 
@@ -103,6 +114,10 @@ def expand_outline_to_full_draft(
     storage by email_id) is a later phase and still raises, so a caller
     without the outline gets an honest "not available yet" rather than
     placeholder prose.
+
+    `tone` picks one of TONES (defaults to "professional" for unknown
+    values) and is appended to the system prompt as one extra instruction —
+    the facts/structure rules above are unaffected by it.
     """
     if not outline:
         raise NotYetImplementedError(
@@ -114,10 +129,12 @@ def expand_outline_to_full_draft(
     if client is None:
         client = _get_default_client()
 
+    system = SYSTEM_PROMPT + " " + _TONE_INSTRUCTIONS.get(tone, _TONE_INSTRUCTIONS[DEFAULT_TONE])
+
     response = client.messages.create(
         model=_default_model(),
         max_tokens=1024,
-        system=SYSTEM_PROMPT,
+        system=system,
         messages=[{"role": "user", "content": _build_user_message(email_id, outline)}],
         output_config={"format": {"type": "json_schema", "schema": RESPONSE_SCHEMA}},
     )

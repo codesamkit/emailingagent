@@ -83,6 +83,7 @@ CREATE TABLE IF NOT EXISTS processed_email (
 
     reply_outline            TEXT,          -- JSON array of bullet strings
     reply_outline_status     TEXT NOT NULL DEFAULT 'none',
+    reply_draft              TEXT,          -- full prose, auto-expanded from reply_outline
 
     processed_at             TEXT,
     context_processed_at     TEXT
@@ -326,6 +327,10 @@ MIGRATIONS: Dict[str, Sequence[Tuple[str, str]]] = {
         (
             "action_items",
             "ALTER TABLE processed_email ADD COLUMN action_items TEXT",
+        ),
+        (
+            "reply_draft",
+            "ALTER TABLE processed_email ADD COLUMN reply_draft TEXT",
         ),
     ),
 }

@@ -14,10 +14,10 @@ export interface CalendarSlot {
 }
 
 export interface CalendarEvent {
-  summary?: string;
-  start: string;
-  end: string;
-  allDay?: boolean;
+  summary: string | null;
+  start: string | null;
+  end: string | null;
+  allDay: boolean;
 }
 
 export interface CalendarContext {
@@ -49,6 +49,7 @@ export interface EmailItem {
   calendarContext?: CalendarContext | null;
   replyOutline: string[] | null;
   replyOutlineStatus: ReplyOutlineStatus;
+  replyDraft: string | null;
   outlineEligible: boolean;
   processedAt: string | null;
   body?: string;
@@ -68,13 +69,6 @@ export interface TodoItem {
   sender: string;
   importanceScore: number | null;
   importanceLevel: ImportanceLevel | null;
-}
-
-export interface CalendarEvent {
-  summary: string | null;
-  start: string | null;
-  end: string | null;
-  allDay: boolean;
 }
 
 export interface CalendarSlotRange {

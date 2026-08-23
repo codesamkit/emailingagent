@@ -96,6 +96,7 @@ def email_to_json(email: ProcessedEmail, include_calendar: bool = False) -> Dict
         "proposedEventStatus": email.proposed_event_status.value,
         "replyOutline": email.reply_outline,
         "replyOutlineStatus": email.reply_outline_status.value,
+        "replyDraft": email.reply_draft,
         "replyEffort": reply_effort(email),
         "outlineEligible": eligible,
         "processedAt": _iso(email.processed_at),

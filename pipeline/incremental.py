@@ -121,6 +121,9 @@ def stages_for(
     elif _outline_missing(existing):
         due.append("outline")
 
+    if "outline" in due or _draft_missing(existing):
+        due.append("expand")
+
     if "scheduling" in due or (existing.is_scheduling_related and existing.calendar_context is None):
         due.append("calendar")
 
@@ -149,6 +152,19 @@ def _outline_missing(existing: ProcessedEmail) -> bool:
 
     eligible, _ = is_eligible(existing)
     return eligible and not existing.reply_outline
+
+
+def _draft_missing(existing: ProcessedEmail) -> bool:
+    """Whether an eligible email has an outline but still needs its draft.
+
+    Mirrors _outline_missing: an unread/no-reply email has no outline (and
+    so no draft) by design, and re-running "expand" for it forever would be
+    the same bug _outline_missing avoids.
+    """
+    from drafting.outline import is_eligible
+
+    eligible, _ = is_eligible(existing)
+    return eligible and bool(existing.reply_outline) and not existing.reply_draft
 
 
 def plan(

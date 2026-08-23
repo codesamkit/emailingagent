@@ -70,7 +70,7 @@ class StageConstantsTest(unittest.TestCase):
         self.assertEqual(
             STAGES,
             ("classify", "score", "summarize", "action_items", "categorize",
-             "scheduling", "calendar", "propose_event", "outline"),
+             "scheduling", "calendar", "propose_event", "outline", "expand"),
         )
 
 
