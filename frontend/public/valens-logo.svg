@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48">
+  <defs>
+    <linearGradient id="valensGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#60A5FA" />
+      <stop offset="50%" stop-color="#2563EB" />
+      <stop offset="100%" stop-color="#1D4ED8" />
+    </linearGradient>
+    <linearGradient id="valensDark" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0F172A" />
+      <stop offset="100%" stop-color="#020617" />
+    </linearGradient>
+  </defs>
+  <rect width="48" height="48" rx="12" fill="url(#valensDark)" stroke="#1E2C4A" stroke-width="1.5" />
+  <!-- Stylized V / AI Pulse Mark -->
+  <path d="M12 16L24 34L36 16" fill="none" stroke="url(#valensGrad)" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round" />
+  <circle cx="24" cy="22" r="3.5" fill="#FFFFFF" />
+  <path d="M18 20L24 29L30 20" fill="none" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round" opacity="0.85" />
+</svg>

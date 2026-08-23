@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" fill="none" width="100" height="100">
+  <defs>
+    <linearGradient id="valenceOrbitalGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#3B82F6" />
+      <stop offset="50%" stop-color="#6366F1" />
+      <stop offset="100%" stop-color="#8B5CF6" />
+    </linearGradient>
+    <linearGradient id="valenceBlueGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#2563EB" />
+      <stop offset="100%" stop-color="#60A5FA" />
+    </linearGradient>
+    <linearGradient id="valencePurpleGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#7C3AED" />
+      <stop offset="100%" stop-color="#A855F7" />
+    </linearGradient>
+  </defs>
+
+  <!-- Orbital Ring 1 (Tilted Left) -->
+  <ellipse cx="50" cy="50" rx="36" ry="18" transform="rotate(-35 50 50)" stroke="url(#valenceOrbitalGrad)" stroke-width="5" stroke-linecap="round" />
+  
+  <!-- Orbital Ring 2 (Tilted Right) -->
+  <ellipse cx="50" cy="50" rx="36" ry="18" transform="rotate(45 50 50)" stroke="url(#valenceOrbitalGrad)" stroke-width="5" stroke-linecap="round" />
+
+  <!-- Orbital Electron Dot 1 (Bottom Left, Blue) -->
+  <circle cx="24" cy="68" r="6" fill="#3B82F6" />
+
+  <!-- Orbital Electron Dot 2 (Top Right, Violet) -->
+  <circle cx="76" cy="28" r="6" fill="#7C3AED" />
+
+  <!-- Center Core 'v' Letterform -->
+  <path d="M41 42L50 60L59 42" stroke="#FFFFFF" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" />
+</svg>
