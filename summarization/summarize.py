@@ -25,6 +25,10 @@ SUMMARY_INSTRUCTIONS = (
     "mentioned. Be strictly factual — base the summary only on what is "
     "explicitly stated or clearly implied in the email text. Do not infer "
     "action items, intentions, or urgency beyond what the email itself says. "
+    "The reader is the mailbox owner shown in the To: line — the email was "
+    "sent TO them. Never describe the owner as a third party: when the email "
+    "asks something of them (including by their name), say it is asked of "
+    '"you", and attribute statements and requests to the From: sender. '
     "Separately, list any dates or deadlines mentioned in the email exactly "
     "as stated (e.g. \"Friday, Aug 28\", \"by EOD Thursday\") — do not "
     "resolve relative dates, guess a year, or convert to another format. "
@@ -59,8 +63,10 @@ RESPONSE_SCHEMA = {
 def format_email_for_prompt(email: RawEmail) -> str:
     """Shared email-to-prompt-text formatting, used by both summarize() and
     batch.summarize_batch() so the two stay in sync."""
+    from llm.prompting import email_identity_block
 
-    return f"Sender: {email.sender}\nSubject: {email.subject}\nBody:\n{email.body}"
+    header = email_identity_block(email.sender, email.recipients, email.subject)
+    return f"{header}\nBody:\n{email.body}"
 
 
 def _get_default_client() -> Any:

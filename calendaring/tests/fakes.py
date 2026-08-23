@@ -61,6 +61,10 @@ class FakeEvents:
         self._owner.events_calls.append(kwargs)
         return _Request(self._owner._next(self._owner.events_responses))
 
+    def insert(self, calendarId: str, body: Dict[str, Any]):
+        self._owner.insert_calls.append({"calendarId": calendarId, "body": body})
+        return _Request(self._owner._next(self._owner.insert_responses))
+
 
 class FakeCalendars:
     def __init__(self, owner: "FakeCalendarService"):
@@ -85,13 +89,16 @@ class FakeCalendarService:
         freebusy_responses: Optional[List[Any]] = None,
         events_responses: Optional[List[Any]] = None,
         calendars_responses: Optional[List[Any]] = None,
+        insert_responses: Optional[List[Any]] = None,
     ):
         self.freebusy_responses = list(freebusy_responses or [{"calendars": {}}])
         self.events_responses = list(events_responses or [{"items": []}])
         self.calendars_responses = list(calendars_responses or [{"timeZone": "UTC"}])
+        self.insert_responses = list(insert_responses or [{"id": "fake-event-id"}])
         self.freebusy_calls: List[Dict[str, Any]] = []
         self.events_calls: List[Dict[str, Any]] = []
         self.calendars_calls: List[str] = []
+        self.insert_calls: List[Dict[str, Any]] = []
 
     @staticmethod
     def _next(queue: List[Any]):

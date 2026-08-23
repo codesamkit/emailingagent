@@ -313,6 +313,17 @@
   .note { font-size: 12.5px; color: var(--ink-soft); margin-top: 8px; }
   .error { color: var(--urgent); font-size: 12.5px; margin-top: 8px; }
   .saved { color: var(--ok); font-size: 12.5px; margin-top: 8px; }
+
+  /* teach controls — segmented level picker + automated toggle */
+  .teach { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; }
+  .seg { display: inline-flex; border: 1px solid var(--rule); border-radius: 7px; overflow: hidden; }
+  .seg button {
+    border: none; background: transparent; color: var(--ink-soft);
+    padding: 5px 12px; font-size: 12.5px; cursor: pointer;
+  }
+  .seg button + button { border-left: 1px solid var(--rule); }
+  .seg button:hover { background: var(--fill-2); }
+  .seg button.on { background: var(--accent-vivid); color: var(--accent-ink); font-weight: 600; }
 </style>
 </head>
 <body>
@@ -582,17 +593,104 @@ async function select(id) {
       <p class="justif">${esc(e.importanceJustification) || "Not scored yet."}</p>
       ${e.isNoReply && e.noReplyReason ? `<p class="note">Flagged no-reply: ${esc(e.noReplyReason)}</p>` : ""}</div>
 
+    <div class="section"><h3>Correct this</h3>
+      <div class="teach">
+        <span class="seg" role="group" aria-label="Pin importance for this sender">
+          ${["low","medium","high","urgent"].map((l) =>
+            `<button data-fb-level="${l}" class="${e.importanceLevel === l ? "on" : ""}">${l}</button>`).join("")}
+        </span>
+        <button class="btn" id="fbNoReply">${e.isNoReply ? "This sender is a real correspondent" : "This sender is automated"}</button>
+      </div>
+      <p class="note">Applies to every email from ${esc(senderName(e.sender))}, now and on every future run.</p>
+      <div id="fbMsg"></div></div>
+
     ${slots.length ? `<div class="section"><h3>Open slots on your calendar</h3>
       <ul class="slot-list">${slots.map((s) =>
         `<li>${new Date(s.start).toLocaleString([], {weekday:"short", month:"short", day:"numeric", hour:"numeric", minute:"2-digit"})}
          – ${new Date(s.end).toLocaleTimeString([], {hour:"numeric", minute:"2-digit"})}</li>`).join("")}</ul></div>` : ""}
+
+    ${e.proposedEvent ? `<div class="section"><h3>Proposed calendar event</h3><div id="proposedEventArea"></div></div>` : ""}
 
     <div class="section"><h3>Reply outline</h3><div id="outlineArea"></div></div>
     <div class="section" id="draftSection" hidden><h3>Full draft (review before sending)</h3>
       <div class="draft" id="draftText"></div>
       <div class="actions"><button class="btn" id="copyDraft">Copy draft</button></div></div>
   </div>`;
+  if (e.proposedEvent) renderProposedEvent(e);
   renderOutline(e);
+
+  el.querySelectorAll("[data-fb-level]").forEach((b) =>
+    b.addEventListener("click", () => sendFeedback(e.emailId, { level: b.dataset.fbLevel })));
+  document.getElementById("fbNoReply").addEventListener("click", () =>
+    sendFeedback(e.emailId, { isNoReply: !e.isNoReply }));
+}
+
+async function sendFeedback(id, payload) {
+  const msg = document.getElementById("fbMsg");
+  try {
+    const r = await fetch("/api/emails/" + id + "/feedback", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
+    const body = await r.json();
+    renderBins(); renderQueue();
+    await select(id);  // re-render first — then write the confirmation into the fresh DOM
+    document.getElementById("fbMsg").innerHTML =
+      `<p class="saved">Saved — ${body.affected} email${body.affected === 1 ? "" : "s"} from this sender corrected.</p>`;
+  } catch (err) {
+    msg.innerHTML = `<p class="error">${esc(err.message)}</p>`;
+  }
+}
+
+function proposedEventTimeRange(ev) {
+  return `${new Date(ev.start).toLocaleString([], {weekday:"short", month:"short", day:"numeric", hour:"numeric", minute:"2-digit"})}
+    – ${new Date(ev.end).toLocaleTimeString([], {hour:"numeric", minute:"2-digit"})}`;
+}
+
+function renderProposedEvent(e) {
+  const area = document.getElementById("proposedEventArea");
+  const ev = e.proposedEvent;
+  const details = `
+    <p class="d-from"><strong>${esc(ev.title)}</strong><br>
+      ${proposedEventTimeRange(ev)}
+      ${ev.location ? `<br>${esc(ev.location)}` : ""}
+      ${ev.attendees.length ? `<br>With: ${esc(ev.attendees.join(", "))}` : ""}</p>`;
+
+  if (e.proposedEventStatus === "approved") {
+    area.innerHTML = `${details}<p class="saved">Created on your calendar.</p>`;
+    return;
+  }
+  if (e.proposedEventStatus === "declined") {
+    area.innerHTML = `${details}<p class="note">Declined.</p>`;
+    return;
+  }
+
+  const failed = e.proposedEventStatus === "failed";
+  area.innerHTML = `${details}
+    ${failed ? `<p class="error">Could not create this event${ev.error ? ": " + esc(ev.error) : ""}.</p>` : ""}
+    <div class="actions">
+      <button class="btn primary" id="approveEvent">${failed ? "Retry" : "Approve"}</button>
+      <button class="btn" id="declineEvent">Decline</button>
+    </div><div id="proposedEventMsg"></div>`;
+  document.getElementById("approveEvent").addEventListener("click", () => decideCalendarEvent(e, "approve"));
+  document.getElementById("declineEvent").addEventListener("click", () => decideCalendarEvent(e, "decline"));
+}
+
+async function decideCalendarEvent(e, action) {
+  const btn = document.getElementById(action === "approve" ? "approveEvent" : "declineEvent");
+  const msg = document.getElementById("proposedEventMsg");
+  btn.disabled = true;
+  try {
+    const r = await fetch("/api/emails/" + e.emailId + "/calendar-event/" + action, { method: "POST" });
+    if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
+    const updated = await r.json();
+    renderProposedEvent(updated);
+    renderQueue();
+  } catch (err) {
+    msg.innerHTML = `<p class="error">${esc(err.message)}</p>`;
+    btn.disabled = false;
+  }
 }
 
 function renderOutline(e) {

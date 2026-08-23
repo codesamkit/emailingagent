@@ -3,7 +3,8 @@
 Owned by nobody; changes require flagging Track A, B, and C first
 (see CONTEXT.md's integration checkpoint rules).
 
-- Track A (ingestion/calendar) produces RawEmail and CalendarContext.
+- Track A (ingestion/calendar) produces RawEmail, CalendarContext, and
+  ProposedEvent (never written to Calendar without explicit user approval).
 - Track B (classification/scoring/summarization) fills in ProcessedEmail's
   is_no_reply, importance_score/level, and summary fields.
 - Track C (drafting/pipeline) fills in reply_outline and orchestrates
@@ -47,6 +48,14 @@ class ReplyOutlineStatus(str, Enum):
     EDITED = "edited"                   # user edited the generated outline
     EXPANDED_TO_DRAFT = "expanded_to_draft"
     SENT = "sent"
+
+
+class ProposedEventStatus(str, Enum):
+    NONE = "none"                       # not scheduling-related, or nothing extractable
+    SUGGESTED = "suggested"             # extracted, awaiting user decision
+    APPROVED = "approved"               # user approved; event exists on Google Calendar
+    DECLINED = "declined"               # user declined; never created
+    FAILED = "failed"                   # user approved but the Calendar API call failed
 
 
 @dataclass
@@ -94,6 +103,25 @@ class CalendarContext:
 
 
 @dataclass
+class ProposedEvent:
+    """A meeting extracted from a scheduling-related email, awaiting the
+    user's approve/decline decision. Never written to Google Calendar until
+    an explicit user action calls calendaring/events.py:create_event — see
+    interfaces/README.md."""
+
+    title: str
+    start: datetime
+    end: datetime
+    attendees: list[str] = field(default_factory=list)
+    location: Optional[str] = None
+    description: Optional[str] = None
+    # Set once an APPROVED event has actually been created.
+    google_event_id: Optional[str] = None
+    # Set when status is FAILED — the Calendar API call raised.
+    error: Optional[str] = None
+
+
+@dataclass
 class ProcessedEmail:
     """Shared output record, filled in incrementally as an email moves
     through classification -> scoring -> summarization -> calendar ->
@@ -131,6 +159,12 @@ class ProcessedEmail:
     # Track A — scheduling gate + calendar (calendar/scheduling_intent.py, calendar/context.py)
     is_scheduling_related: Optional[bool] = None
     calendar_context: Optional[CalendarContext] = None
+
+    # Track A — proposed event extraction (calendaring/propose.py), gated on
+    # is_scheduling_related. Only ever written to Calendar via an explicit
+    # user approval (calendaring/events.py) — never automatically.
+    proposed_event: Optional[ProposedEvent] = None
+    proposed_event_status: ProposedEventStatus = ProposedEventStatus.NONE
 
     # Track C — drafting (drafting/outline.py)
     reply_outline: Optional[list[str]] = None

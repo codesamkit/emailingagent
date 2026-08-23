@@ -13,6 +13,8 @@ from models.schema import (
     CalendarSlot,
     ImportanceLevel,
     ProcessedEmail,
+    ProposedEvent,
+    ProposedEventStatus,
     ReadStatus,
     ReplyOutlineStatus,
 )
@@ -57,6 +59,13 @@ def client(tmp_path, monkeypatch):
                       existing_events=[{"summary": "Standup", "start": NOW, "all_day": False}],
                   )),
             email("unscored", importance_score=None, importance_level=None, processed_at=None),
+            email("proposed-meeting", is_scheduling_related=True, importance_score=55.0,
+                  sender="Priya <priya@example.com>", subject="Sync Thursday?",
+                  proposed_event=ProposedEvent(
+                      title="Sync with Priya", start=NOW + timedelta(days=3),
+                      end=NOW + timedelta(days=3, minutes=30), attendees=["priya@example.com"],
+                  ),
+                  proposed_event_status=ProposedEventStatus.SUGGESTED),
         ],
         db_path,
     )
@@ -67,14 +76,14 @@ class TestHealthAndStats:
     def test_health_reports_row_count(self, client):
         body = client.get("/api/health").json()
         assert body["status"] == "ok"
-        assert body["processedEmails"] == 5
+        assert body["processedEmails"] == 6
 
     def test_stats_counts(self, client):
         body = client.get("/api/stats").json()
-        assert body["total"] == 5
+        assert body["total"] == 6
         assert body["unread"] == 1
         assert body["noReply"] == 1
-        assert body["scheduling"] == 1
+        assert body["scheduling"] == 2
         assert body["withOutline"] == 1
         assert body["unprocessed"] == 1
         assert body["byLevel"]["urgent"] == 1
@@ -88,8 +97,8 @@ class TestHealthAndStats:
 class TestListEmails:
     def test_returns_all_by_default(self, client):
         body = client.get("/api/emails").json()
-        assert body["total"] == 5
-        assert len(body["emails"]) == 5
+        assert body["total"] == 6
+        assert len(body["emails"]) == 6
 
     def test_sorted_by_importance_descending(self, client):
         ids = [e["emailId"] for e in client.get("/api/emails").json()["emails"]]
@@ -124,7 +133,8 @@ class TestListEmails:
 
     def test_filter_scheduling(self, client):
         body = client.get("/api/emails?scheduling=true").json()
-        assert [e["emailId"] for e in body["emails"]] == ["scheduling"]
+        # Importance-descending: scheduling (60) before proposed-meeting (55).
+        assert [e["emailId"] for e in body["emails"]] == ["scheduling", "proposed-meeting"]
 
     def test_filter_has_outline(self, client):
         body = client.get("/api/emails?hasOutline=true").json()
@@ -159,7 +169,7 @@ class TestListEmails:
 
     def test_total_reflects_the_filtered_set_not_the_page(self, client):
         body = client.get("/api/emails?limit=1").json()
-        assert body["total"] == 5
+        assert body["total"] == 6
         assert len(body["emails"]) == 1
 
     def test_pagination_offset(self, client):
@@ -290,6 +300,55 @@ class TestAuth:
         assert client.get("/").status_code == 200
 
 
+class TestFeedback:
+    def test_level_correction_applies_to_all_mail_from_the_sender(self, client):
+        response = client.post("/api/emails/read-eligible/feedback", json={"level": "low"})
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["email"]["importanceLevel"] == "low"
+        assert body["affected"] >= 2  # dana@example.com sends several fixtures
+
+        sibling = client.get("/api/emails/unread").json()
+        assert sibling["importanceLevel"] == "low"
+        assert "feedback" in sibling["importanceJustification"].lower()
+
+    def test_no_reply_correction_strips_the_outline(self, client):
+        response = client.post("/api/emails/read-eligible/feedback", json={"isNoReply": True})
+
+        assert response.status_code == 200
+        body = response.json()["email"]
+        assert body["isNoReply"] is True
+        assert body["replyOutline"] is None
+        assert body["replyOutlineStatus"] == "not_applicable"
+
+    def test_correction_survives_a_reprocess(self, client, tmp_path):
+        """The loop part of the feedback loop: pipeline runs re-apply the
+        prior, so the model can never silently undo a correction."""
+        from pipeline.refresh import apply_feedback_priors
+
+        client.post("/api/emails/read-eligible/feedback", json={"level": "low"})
+        db_path = main.DB_PATH
+
+        # Simulate the model re-scoring the row back to urgent on a later run.
+        row = persist.get("read-eligible", db_path)
+        row.importance_level = ImportanceLevel.URGENT
+        row.importance_score = 90.0
+        persist.upsert([row], db_path)
+
+        assert apply_feedback_priors(db_path) >= 1
+        assert persist.get("read-eligible", db_path).importance_level == ImportanceLevel.LOW
+
+    def test_rejects_empty_and_garbage(self, client):
+        assert client.post("/api/emails/read-eligible/feedback", json={}).status_code == 422
+        assert client.post(
+            "/api/emails/read-eligible/feedback", json={"level": "megaurgent"}
+        ).status_code == 422
+
+    def test_unknown_id_is_404(self, client):
+        assert client.post("/api/emails/nope/feedback", json={"level": "low"}).status_code == 404
+
+
 class TestIndexPage:
     def test_root_serves_the_review_ui(self, client):
         response = client.get("/")
@@ -329,3 +388,121 @@ class TestExpandDraft:
 
     def test_unknown_id_is_404(self, client):
         assert client.post("/api/emails/nope/expand").status_code == 404
+
+
+class TestApproveCalendarEvent:
+    def test_approve_creates_the_event_and_persists_the_id(self, client, monkeypatch):
+        from calendaring import events as events_module
+
+        def fake_create_event(proposed, **kwargs):
+            from dataclasses import replace
+
+            return replace(proposed, google_event_id="gcal-xyz")
+
+        monkeypatch.setattr(events_module, "create_event", fake_create_event)
+
+        response = client.post("/api/emails/proposed-meeting/calendar-event/approve")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["proposedEventStatus"] == "approved"
+        assert body["proposedEvent"]["googleEventId"] == "gcal-xyz"
+
+    def test_approve_persists_failure_without_raising_to_the_client(self, client, monkeypatch):
+        from calendaring import events as events_module
+
+        def fake_create_event(proposed, **kwargs):
+            from dataclasses import replace
+
+            return replace(proposed, google_event_id=None, error="quota exceeded")
+
+        monkeypatch.setattr(events_module, "create_event", fake_create_event)
+
+        response = client.post("/api/emails/proposed-meeting/calendar-event/approve")
+        assert response.status_code == 502
+        assert "quota exceeded" in response.json()["detail"]
+
+        back = client.get("/api/emails/proposed-meeting").json()
+        assert back["proposedEventStatus"] == "failed"
+
+    def test_approve_on_email_with_no_pending_proposal_is_409(self, client):
+        response = client.post("/api/emails/scheduling/calendar-event/approve")
+        assert response.status_code == 409
+
+    def test_unknown_id_is_404(self, client):
+        assert client.post("/api/emails/nope/calendar-event/approve").status_code == 404
+
+    def test_approve_is_rejected_a_second_time(self, client, monkeypatch):
+        """A repeated approve must not double-book — the endpoint is not
+        idempotent on purpose once a decision has been recorded."""
+        from calendaring import events as events_module
+
+        def fake_create_event(proposed, **kwargs):
+            from dataclasses import replace
+
+            return replace(proposed, google_event_id="gcal-once")
+
+        monkeypatch.setattr(events_module, "create_event", fake_create_event)
+
+        first = client.post("/api/emails/proposed-meeting/calendar-event/approve")
+        assert first.status_code == 200
+        second = client.post("/api/emails/proposed-meeting/calendar-event/approve")
+        assert second.status_code == 409
+
+    def test_retry_after_a_failed_attempt_is_allowed(self, client, monkeypatch):
+        """The review UI's Retry button re-POSTs approve on a FAILED
+        proposal — the gate must accept that starting state, not just
+        SUGGESTED."""
+        from calendaring import events as events_module
+        from dataclasses import replace
+
+        monkeypatch.setattr(
+            events_module, "create_event",
+            lambda proposed, **kwargs: replace(proposed, google_event_id=None, error="down"),
+        )
+        first = client.post("/api/emails/proposed-meeting/calendar-event/approve")
+        assert first.status_code == 502
+        assert client.get("/api/emails/proposed-meeting").json()["proposedEventStatus"] == "failed"
+
+        monkeypatch.setattr(
+            events_module, "create_event",
+            lambda proposed, **kwargs: replace(proposed, google_event_id="gcal-retry-ok"),
+        )
+        retry = client.post("/api/emails/proposed-meeting/calendar-event/approve")
+        assert retry.status_code == 200
+        assert retry.json()["proposedEventStatus"] == "approved"
+
+
+class TestDeclineCalendarEvent:
+    def test_decline_records_the_decision_without_calling_calendar(self, client, monkeypatch):
+        from calendaring import events as events_module
+
+        class ExplodingCreateEvent:
+            def __call__(self, *args, **kwargs):
+                raise AssertionError("Calendar API must not be called on decline")
+
+        monkeypatch.setattr(events_module, "create_event", ExplodingCreateEvent())
+
+        response = client.post("/api/emails/proposed-meeting/calendar-event/decline")
+        assert response.status_code == 200
+        assert response.json()["proposedEventStatus"] == "declined"
+
+    def test_decline_on_email_with_no_pending_proposal_is_409(self, client):
+        response = client.post("/api/emails/scheduling/calendar-event/decline")
+        assert response.status_code == 409
+
+    def test_unknown_id_is_404(self, client):
+        assert client.post("/api/emails/nope/calendar-event/decline").status_code == 404
+
+    def test_decline_after_a_failed_approve_attempt_is_allowed(self, client, monkeypatch):
+        from calendaring import events as events_module
+        from dataclasses import replace
+
+        monkeypatch.setattr(
+            events_module, "create_event",
+            lambda proposed, **kwargs: replace(proposed, google_event_id=None, error="down"),
+        )
+        assert client.post("/api/emails/proposed-meeting/calendar-event/approve").status_code == 502
+
+        response = client.post("/api/emails/proposed-meeting/calendar-event/decline")
+        assert response.status_code == 200
+        assert response.json()["proposedEventStatus"] == "declined"

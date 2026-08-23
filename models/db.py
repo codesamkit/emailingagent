@@ -77,6 +77,9 @@ CREATE TABLE IF NOT EXISTS processed_email (
     is_scheduling_related    INTEGER,
     calendar_context         TEXT,          -- JSON blob of CalendarContext
 
+    proposed_event           TEXT,          -- JSON blob of ProposedEvent
+    proposed_event_status    TEXT NOT NULL DEFAULT 'none',
+
     reply_outline            TEXT,          -- JSON array of bullet strings
     reply_outline_status     TEXT NOT NULL DEFAULT 'none',
 
@@ -105,6 +108,15 @@ MIGRATIONS: Dict[str, Sequence[Tuple[str, str]]] = {
             "ALTER TABLE processed_email ADD COLUMN mentioned_dates TEXT",
         ),
         ("category", "ALTER TABLE processed_email ADD COLUMN category TEXT"),
+        (
+            "proposed_event",
+            "ALTER TABLE processed_email ADD COLUMN proposed_event TEXT",
+        ),
+        (
+            "proposed_event_status",
+            "ALTER TABLE processed_email ADD COLUMN proposed_event_status "
+            "TEXT NOT NULL DEFAULT 'none'",
+        ),
     ),
 }
 

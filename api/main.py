@@ -6,9 +6,10 @@ calls; serving is a fast read of rows that job already wrote. Keeping those
 apart means no HTTP request ever waits on the pipeline, and the API needs no
 long timeouts, no job queue, and no background workers to be correct.
 
-The two mutating endpoints (edit an outline, expand a draft) are per-email
-and human-triggered. Nothing here sends email or creates calendar events —
-that stays out of the product until it is explicitly built and gated.
+The mutating endpoints (edit an outline, expand a draft, approve/decline a
+proposed calendar event) are per-email and human-triggered. Nothing here
+sends email. Creating a calendar event happens only from the approve
+endpoint, in direct response to a human click — never from a batch run.
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ from fastapi import Body, Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
-from models.schema import ReplyOutlineStatus
+from models.schema import ProposedEventStatus, ReplyOutlineStatus
 from pipeline import persist
 
 from .auth import require_token
@@ -176,6 +177,53 @@ def edit_outline(
     return email_to_json(persist.get(email_id, DB_PATH), include_calendar=True)
 
 
+@app.post("/api/emails/{email_id}/feedback", dependencies=[Depends(require_token)])
+def give_feedback(
+    email_id: str,
+    level: Optional[str] = Body(None),
+    isNoReply: Optional[bool] = Body(None),
+) -> Dict[str, Any]:
+    """Record a correction and apply it immediately.
+
+    One click teaches the whole inbox: the correction is stored as a prior
+    on this email's *sender*, applied right now to every stored email from
+    that sender, and re-applied after every future pipeline run — so the
+    model's output can never silently undo it. Deterministic on purpose:
+    a stored override fixes every future email from the sender with
+    certainty, which few-shot prompt examples cannot promise.
+    """
+    email = persist.get(email_id, DB_PATH)
+    if email is None:
+        raise HTTPException(status_code=404, detail="No processed email {0!r}".format(email_id))
+    if level is None and isNoReply is None:
+        raise HTTPException(status_code=422, detail="Provide level and/or isNoReply.")
+
+    from feedback import store as feedback_store
+    from feedback.apply import apply_feedback
+    from pipeline.refresh import apply_score_spread
+
+    try:
+        if level is not None:
+            feedback_store.record(email.sender, feedback_store.KIND_LEVEL,
+                                  level, email_id=email_id, db_path=DB_PATH)
+        if isNoReply is not None:
+            feedback_store.record(email.sender, feedback_store.KIND_NO_REPLY,
+                                  "true" if isNoReply else "false",
+                                  email_id=email_id, db_path=DB_PATH)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+    changed = apply_feedback(persist.all_processed(DB_PATH), db_path=DB_PATH)
+    if changed:
+        persist.upsert(changed, DB_PATH)
+    apply_score_spread(DB_PATH)
+
+    return {
+        "email": email_to_json(persist.get(email_id, DB_PATH), include_calendar=True),
+        "affected": len(changed),
+    }
+
+
 @app.post("/api/emails/{email_id}/expand", dependencies=[Depends(require_token)])
 def expand_draft(email_id: str) -> Dict[str, Any]:
     """Expand an approved outline into full prose.
@@ -251,6 +299,65 @@ def refresh_pipeline(ingestLimit: Optional[int] = Query(None, ge=1, le=500)) -> 
     # `plan` maps email_id -> stage tuple; useful in logs, noise on the wire.
     result.pop("plan", None)
     return result
+
+
+_APPROVABLE_STATUSES = (ProposedEventStatus.SUGGESTED, ProposedEventStatus.FAILED)
+
+
+@app.post("/api/emails/{email_id}/calendar-event/approve", dependencies=[Depends(require_token)])
+def approve_calendar_event(email_id: str) -> Dict[str, Any]:
+    """Create the proposed event on Google Calendar.
+
+    The only HTTP-reachable path that writes to Calendar, and it only runs in
+    direct response to this human click — never from the batch pipeline.
+    SUGGESTED (first attempt) and FAILED (the review UI's Retry button) are
+    both acceptable starting states; APPROVED or DECLINED are not — the same
+    correctness-over-convenience rule `edit_outline` applies to outlines: a
+    stale or repeated approve must not double-book or silently no-op.
+    """
+    email = persist.get(email_id, DB_PATH)
+    if email is None:
+        raise HTTPException(status_code=404, detail="No processed email {0!r}".format(email_id))
+    if email.proposed_event is None or email.proposed_event_status not in _APPROVABLE_STATUSES:
+        raise HTTPException(
+            status_code=409,
+            detail="This email has no pending proposed event to approve.",
+        )
+
+    from calendaring.events import create_event
+
+    result = create_event(email.proposed_event)
+    if result.google_event_id is None:
+        persist.update_proposed_event_status(
+            email_id, ProposedEventStatus.FAILED, result, DB_PATH
+        )
+        raise HTTPException(
+            status_code=502,
+            detail="Could not create the calendar event: {0}".format(result.error),
+        )
+
+    persist.update_proposed_event_status(email_id, ProposedEventStatus.APPROVED, result, DB_PATH)
+    return email_to_json(persist.get(email_id, DB_PATH), include_calendar=True)
+
+
+@app.post("/api/emails/{email_id}/calendar-event/decline", dependencies=[Depends(require_token)])
+def decline_calendar_event(email_id: str) -> Dict[str, Any]:
+    """Discard the proposed event. No Calendar API call is ever made.
+
+    Also accepts FAILED (a user who saw a failed approve attempt and wants to
+    give up on it instead of retrying) — same starting states as approve.
+    """
+    email = persist.get(email_id, DB_PATH)
+    if email is None:
+        raise HTTPException(status_code=404, detail="No processed email {0!r}".format(email_id))
+    if email.proposed_event is None or email.proposed_event_status not in _APPROVABLE_STATUSES:
+        raise HTTPException(
+            status_code=409,
+            detail="This email has no pending proposed event to decline.",
+        )
+
+    persist.update_proposed_event_status(email_id, ProposedEventStatus.DECLINED, db_path=DB_PATH)
+    return email_to_json(persist.get(email_id, DB_PATH), include_calendar=True)
 
 
 @app.get("/api/stats", dependencies=[Depends(require_token)])

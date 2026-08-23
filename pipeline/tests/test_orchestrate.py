@@ -11,6 +11,8 @@ from models.schema import (
     CalendarSlot,
     ImportanceLevel,
     ProcessedEmail,
+    ProposedEvent,
+    ProposedEventStatus,
     RawEmail,
     ReadStatus,
     ReplyOutlineStatus,
@@ -131,6 +133,65 @@ class TestCalendarGate:
         )
         pipeline.process([raw("a"), raw("b"), raw("c")], now=NOW)
         assert len(calls) == 1
+
+
+class TestProposedEventStage:
+    def test_not_called_for_non_scheduling_email(self):
+        calls = []
+        full_pipeline(
+            scheduling_gate=lambda e: False,
+            propose_event=lambda p, r: calls.append(1) or (None, ProposedEventStatus.NONE),
+        ).process_one(raw(), now=NOW)
+        assert calls == []
+
+    def test_called_for_a_scheduling_email(self):
+        proposed = ProposedEvent(title="Sync", start=NOW, end=NOW + timedelta(minutes=30))
+        result = full_pipeline(
+            scheduling_gate=lambda e: True,
+            propose_event=lambda p, r: (proposed, ProposedEventStatus.SUGGESTED),
+        ).process_one(raw(), now=NOW)
+        assert result.proposed_event is proposed
+        assert result.proposed_event_status == ProposedEventStatus.SUGGESTED
+
+    def test_approved_status_is_never_overwritten_on_rerun(self):
+        """Once a user has approved, a real calendar event may exist — a
+        later pipeline run must not regenerate or overwrite it."""
+        old_event = ProposedEvent(
+            title="Original", start=NOW, end=NOW + timedelta(minutes=30),
+            google_event_id="abc123",
+        )
+        existing = ProcessedEmail(
+            email_id="e1", thread_id="t1", sender="Dana <dana@example.com>",
+            subject="Hi", received_at=NOW, read_status=ReadStatus.READ,
+            is_scheduling_related=True,
+            proposed_event=old_event, proposed_event_status=ProposedEventStatus.APPROVED,
+        )
+        calls = []
+        result = full_pipeline(
+            scheduling_gate=lambda e: True,
+            propose_event=lambda p, r: calls.append(1) or (
+                ProposedEvent(title="New", start=NOW, end=NOW + timedelta(minutes=30)),
+                ProposedEventStatus.SUGGESTED,
+            ),
+        ).process_one(raw(), existing=existing, now=NOW)
+        assert calls == []
+        assert result.proposed_event is old_event
+        assert result.proposed_event_status == ProposedEventStatus.APPROVED
+
+    def test_declined_status_is_never_overwritten_on_rerun(self):
+        existing = ProcessedEmail(
+            email_id="e1", thread_id="t1", sender="Dana <dana@example.com>",
+            subject="Hi", received_at=NOW, read_status=ReadStatus.READ,
+            is_scheduling_related=True,
+            proposed_event_status=ProposedEventStatus.DECLINED,
+        )
+        calls = []
+        result = full_pipeline(
+            scheduling_gate=lambda e: True,
+            propose_event=lambda p, r: calls.append(1) or (None, ProposedEventStatus.NONE),
+        ).process_one(raw(), existing=existing, now=NOW)
+        assert calls == []
+        assert result.proposed_event_status == ProposedEventStatus.DECLINED
 
 
 class TestGracefulDegradation:
@@ -290,3 +351,48 @@ class TestPersistenceRoundTrip:
 
     def test_update_outline_reports_unknown_email(self, tmp_path):
         assert not persist.update_outline("nope", ["x"], ReplyOutlineStatus.EDITED, tmp_path / "t.db")
+
+    def test_proposed_event_survives_a_round_trip(self, tmp_path):
+        db_path = tmp_path / "t.db"
+        proposed = ProposedEvent(
+            title="Sync with Dana", start=NOW, end=NOW + timedelta(minutes=30),
+            attendees=["dana@example.com"], location="Room 2",
+        )
+        result = full_pipeline(
+            scheduling_gate=lambda e: True,
+            propose_event=lambda p, r: (proposed, ProposedEventStatus.SUGGESTED),
+        ).process_one(raw(), now=NOW)
+
+        persist.upsert([result], db_path)
+        back = persist.get("e1", db_path)
+
+        assert back.proposed_event_status == ProposedEventStatus.SUGGESTED
+        assert back.proposed_event.title == "Sync with Dana"
+        assert back.proposed_event.start == NOW
+        assert back.proposed_event.attendees == ["dana@example.com"]
+        assert back.proposed_event.location == "Room 2"
+
+    def test_update_proposed_event_status_persists_approval(self, tmp_path):
+        db_path = tmp_path / "t.db"
+        proposed = ProposedEvent(title="Sync", start=NOW, end=NOW + timedelta(minutes=30))
+        result = full_pipeline(
+            scheduling_gate=lambda e: True,
+            propose_event=lambda p, r: (proposed, ProposedEventStatus.SUGGESTED),
+        ).process_one(raw(), now=NOW)
+        persist.upsert([result], db_path)
+
+        approved = ProposedEvent(
+            title="Sync", start=NOW, end=NOW + timedelta(minutes=30),
+            google_event_id="gcal-123",
+        )
+        assert persist.update_proposed_event_status(
+            "e1", ProposedEventStatus.APPROVED, approved, db_path
+        )
+        back = persist.get("e1", db_path)
+        assert back.proposed_event_status == ProposedEventStatus.APPROVED
+        assert back.proposed_event.google_event_id == "gcal-123"
+
+    def test_update_proposed_event_status_reports_unknown_email(self, tmp_path):
+        assert not persist.update_proposed_event_status(
+            "nope", ProposedEventStatus.DECLINED, db_path=tmp_path / "t.db"
+        )

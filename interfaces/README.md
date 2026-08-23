@@ -156,6 +156,47 @@ slots = suggest_available_slots(30, context=processed.calendar_context)
 
 Working hours are interpreted in the **calendar's own timezone**, not UTC.
 
+## Calendar event proposal & creation (Track A) → produces `proposed_event`
+
+```python
+# calendaring/propose.py
+def extract_proposed_event(
+    processed: ProcessedEmail,
+    raw: RawEmail,
+    *,
+    client=None,             # additive: injection for tests
+    tz: str | None = None,   # additive: override the interpretation timezone
+) -> tuple[ProposedEvent | None, ProposedEventStatus]:
+    """Code-level gate BEFORE any LLM call:
+      - processed.is_scheduling_related != True -> (None, ProposedEventStatus.NONE)
+      - else -> one JSON-schema-constrained LLM call; if the email pins down
+        a specific date/time, (ProposedEvent, ProposedEventStatus.SUGGESTED);
+        if it's only a vague availability ask, (None, ProposedEventStatus.NONE).
+    Never calls the Calendar API and never writes anything — extraction only.
+    Called by the pipeline's propose_event stage, after the calendar stage."""
+
+# calendaring/events.py
+def create_event(
+    proposed: ProposedEvent,
+    service=None,               # additive: injection for tests
+    calendar_id: str = "primary",
+    timezone_name: str | None = None,
+) -> ProposedEvent:
+    """Calls events.insert. Returns a copy of `proposed` with google_event_id
+    set on success, or error set on ANY failure (API error, missing/expired
+    token, missing client secrets) — never raises. The ONLY function in the
+    repo that writes to Calendar. Called from exactly one place: api/main.py's
+    approve endpoint, in direct response to a human clicking Approve in the
+    review UI. Never called from the pipeline or any batch job — see
+    PHASES.md Phase 1B and calendaring/config.py's WRITE_SCOPE comment for
+    why that separation is load-bearing, not incidental. When `service` isn't
+    injected, credential lookup is non-interactive (allow_interactive=False)
+    — this runs inside a synchronous HTTP request, so a missing token must
+    fail fast with a message telling the operator to run
+    `python -m calendaring.cli auth`, not block the request on a browser
+    consent popup."""
+```
+
 ## Drafting (Track C) → produces `reply_outline`
 
 ```python

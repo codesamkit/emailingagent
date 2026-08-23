@@ -7,8 +7,10 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from models.schema import (
+    CalendarContext,
     ImportanceLevel,
     ProcessedEmail,
+    ProposedEventStatus,
     RawEmail,
     ReadStatus,
     ReplyOutlineStatus,
@@ -178,6 +180,33 @@ class TestPartialRecords:
     def test_scheduling_email_without_context_refetches_calendar(self):
         record = complete(is_scheduling_related=True, calendar_context=None)
         assert "calendar" in incremental.stages_for(raw(), record)
+
+    def test_scheduling_email_without_context_also_reruns_propose_event(self):
+        """A calendar refetch means propose_event has fresh input too."""
+        record = complete(is_scheduling_related=True, calendar_context=None)
+        assert "propose_event" in incremental.stages_for(raw(), record)
+
+    def test_scheduling_email_missing_proposed_event_reruns_it(self):
+        """A row processed before this feature shipped: calendar_context is
+        already there, but extraction never ran (proposed_event_status is
+        still the default NONE) — it must not stay stuck that way forever."""
+        record = complete(
+            is_scheduling_related=True,
+            calendar_context=CalendarContext(range_start=NOW, range_end=NOW),
+        )
+        assert incremental.stages_for(raw(), record) == ("propose_event",)
+
+    def test_scheduling_email_with_pending_proposal_is_not_retried(self):
+        record = complete(
+            is_scheduling_related=True,
+            calendar_context=CalendarContext(range_start=NOW, range_end=NOW),
+            proposed_event_status=ProposedEventStatus.SUGGESTED,
+        )
+        assert incremental.stages_for(raw(), record) == ()
+
+    def test_non_scheduling_email_never_gets_propose_event_scheduled(self):
+        record = complete(is_scheduling_related=False)
+        assert incremental.stages_for(raw(), record) == ()
 
 
 class TestSummarizePlan:

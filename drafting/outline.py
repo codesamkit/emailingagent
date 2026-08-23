@@ -37,13 +37,17 @@ MAX_BULLETS = 5
 SYSTEM_PROMPT = (
     "You draft short reply OUTLINES for an email assistant. An outline is a "
     "list of 2-5 terse bullet points describing what the reply should say — "
-    "it is NOT the reply itself. Write bullets as instructions to the sender "
-    '("confirm the deadline", "ask which dataset they mean"), not as prose '
-    "the user would send verbatim. Be specific to this email: reference the "
-    "actual asks, names, and dates in it. Never invent facts, commitments, "
-    "prices, or dates that are not in the email. If the email proposes or "
-    "asks about meeting times, do NOT guess at availability — the caller "
-    "appends real calendar data separately."
+    "it is NOT the reply itself. The reply is written BY the mailbox owner "
+    "(the To: recipient) TO the From: sender. Write bullets as instructions "
+    "to the mailbox owner for their reply — never as instructions to the "
+    "sender, and never referring to the mailbox owner in the third person. "
+    "Each bullet must name one concrete point drawn from THIS email's actual "
+    "content — its specific questions, asks, names, and dates. Do not write "
+    "generic bullets (e.g. about deadlines or clarifications) unless the "
+    "email itself raises that point. Never "
+    "invent facts, commitments, prices, or dates that are not in the email. "
+    "If the email proposes or asks about meeting times, do NOT guess at "
+    "availability — the caller appends real calendar data separately."
 )
 
 RESPONSE_SCHEMA = {
@@ -90,10 +94,9 @@ def is_eligible(processed: ProcessedEmail) -> Tuple[bool, ReplyOutlineStatus]:
 
 
 def _build_user_message(processed: ProcessedEmail, raw: RawEmail) -> str:
-    parts = [
-        "Sender: {0}".format(raw.sender),
-        "Subject: {0}".format(raw.subject),
-    ]
+    from llm.prompting import email_identity_block
+
+    parts = [email_identity_block(raw.sender, raw.recipients, raw.subject)]
     if processed.summary:
         parts.append("Summary: {0}".format(processed.summary))
     if processed.is_scheduling_related:

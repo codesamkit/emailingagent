@@ -1,8 +1,13 @@
 {
   "manifest_version": 3,
-  "name": "AI Email Agent for Gmail",
+  "name": "Valence",
   "version": "0.1.0",
-  "description": "Importance badges, summaries, and reply outlines from your local AI email agent, inside Gmail.",
+  "description": "Importance badges, summaries, reply outlines, and calendar proposals from your local Valence email agent, inside Gmail.",
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
   "permissions": ["storage"],
   "host_permissions": ["http://127.0.0.1/*", "http://localhost/*"],
   "background": {
