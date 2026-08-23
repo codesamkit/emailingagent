@@ -65,5 +65,40 @@ class TestExtractActionItems(unittest.TestCase):
         self.assertEqual(items, ["Pay the invoice by Sept 1"])
 
 
+class TestIsMeaningful(unittest.TestCase):
+    """The response schema bounds length and count but cannot require
+    content, and the model does emit degenerate output."""
+
+    def test_rejects_punctuation_only(self):
+        for junk in [",", "...", "   ", "1,2,3", "a,b"]:
+            self.assertFalse(action_items.is_meaningful(junk), junk)
+
+    def test_rejects_a_leaked_json_fragment(self):
+        """Seen ten times over as a bare "," plus one "]}  deficiency:" in a
+        real mailbox; both reached the to-do list as unreadable rows."""
+        self.assertFalse(action_items.is_meaningful("]}  deficiency:"))
+
+    def test_keeps_real_items_including_terse_ones(self):
+        for item in [
+            "Send the signed contract by Friday.",
+            "Get Kenny Zhou on a call this week.",
+            "Pay $500",
+            "Task A",
+        ]:
+            self.assertTrue(action_items.is_meaningful(item), item)
+
+    def test_extraction_drops_junk_and_strips(self):
+        client = _FakeClient({"action_items": [",", "  Send the contract  "]})
+        items = action_items.extract_action_items(
+            RawEmail(
+                email_id="e1", thread_id="t1", sender="a@b.com", recipients=["me@x.com"],
+                subject="Hi", body="Body", received_at=datetime(2026, 8, 24),
+                read_status=ReadStatus.READ,
+            ),
+            client=client,
+        )
+        self.assertEqual(items, ["Send the contract"])
+
+
 if __name__ == "__main__":
     unittest.main()

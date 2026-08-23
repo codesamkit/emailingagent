@@ -12,6 +12,7 @@ invoice) still surfaces an action item even though it never gets an outline.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, List, Optional
 
 from models.schema import RawEmail
@@ -33,6 +34,10 @@ ACTION_ITEM_INSTRUCTIONS = (
     '"Send the signed contract by Friday"), not a restatement of the whole '
     "email. Empty list if the email asks nothing of the recipient."
 )
+
+# An action item is at minimum a short verb phrase ("Pay the invoice"); below
+# this it is noise rather than a terse task.
+MIN_ITEM_CHARS = 6
 
 SYSTEM_PROMPT = (
     "You extract action items from inbox emails for a busy reader's "
@@ -81,4 +86,32 @@ def extract_action_items(email: RawEmail, client: Optional[Any] = None) -> List[
 
     text = next(block.text for block in response.content if block.type == "text")
     data = json.loads(text)
-    return [str(item) for item in data["action_items"]]
+    return [
+        item.strip()
+        for item in (str(raw_item) for raw_item in data["action_items"])
+        if is_meaningful(item)
+    ]
+
+
+def is_meaningful(item: str) -> bool:
+    """Whether an extracted string is actually an action item.
+
+    The schema bounds length and count but can't require *content*, and the
+    model does emit degenerate output -- a bare "," (ten times in the demo
+    mailbox) and once a raw JSON fragment, "']}  deficiency:'". Those reach
+    the to-do list as unreadable rows, so they are rejected here and filtered
+    again in `pipeline/todo.py` for items already persisted.
+
+    Deliberately a shape check, not a quality judgement: anything that reads
+    like a phrase is kept, because deciding an item isn't *important* enough
+    is the reader's call, not this function's.
+    """
+    text = (item or "").strip()
+    if len(text) < MIN_ITEM_CHARS:
+        return False
+    # Leading punctuation is the tell for a fragment of the model's own JSON
+    # leaking through ("]}  deficiency:"); a real item opens with a word.
+    if not text[0].isalnum():
+        return False
+    # ...and contains at least one actual word, not just digits and symbols.
+    return bool(re.search(r"[A-Za-z]{2}", text))
