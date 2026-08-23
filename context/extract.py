@@ -321,31 +321,11 @@ RESPONSE_SCHEMA = {
     "type": "object",
     "properties": {
         "reason": {"type": "string", "maxLength": 400},
-        "projects": {
-            "type": "array",
-            "maxItems": 4,
-            "items": {"type": "string", "maxLength": 60},
-        },
-        "deliverables": {
-            "type": "array",
-            "maxItems": 6,
-            "items": {"type": "string", "maxLength": 60},
-        },
-        "topics": {
-            "type": "array",
-            "maxItems": 3,
-            "items": {"type": "string", "maxLength": 40},
-        },
-        "primary_ids": {
-            "type": "array",
-            "maxItems": 8,
-            "items": {"type": "string", "maxLength": 24},
-        },
-        "case_ids": {
-            "type": "array",
-            "maxItems": 8,
-            "items": {"type": "string", "maxLength": 24},
-        },
+        "projects": {"type": "array", "items": {"type": "string", "maxLength": 60}},
+        "deliverables": {"type": "array", "items": {"type": "string", "maxLength": 60}},
+        "topics": {"type": "array", "items": {"type": "string", "maxLength": 40}},
+        "primary_ids": {"type": "array", "items": {"type": "string", "maxLength": 24}},
+        "case_ids": {"type": "array", "items": {"type": "string", "maxLength": 24}},
         "confidence": {"type": "number"},
     },
     "required": ["reason", "projects", "deliverables", "topics", "primary_ids",
@@ -353,10 +333,47 @@ RESPONSE_SCHEMA = {
     "additionalProperties": False,
 }
 
+# Array length is capped in code, not in the schema. `maxItems` is valid JSON
+# Schema and ollama's constrained decoder honours it, but the Anthropic
+# structured-output API rejects it outright:
+#
+#   400 output_config.format.schema: For 'array' type, property 'maxItems' is
+#   not supported
+#
+# This is the repo's first array-valued schema, so nothing had hit that before.
+# A cap enforced here is the better place for it anyway — same posture as
+# classification/categorize.py's `_normalize_topic`, which truncates the answer
+# in code rather than trusting the prompt to have been obeyed. `maxLength` on
+# the strings is still structural, which is what makes a repetition loop inside
+# a string impossible rather than merely discouraged.
+MAX_ITEMS = {
+    "projects": 4,
+    "deliverables": 6,
+    "topics": 3,
+    "primary_ids": 8,
+    "case_ids": 8,
+}
+
+
+def _capped(data: Dict[str, Any], field: str) -> List[str]:
+    """The model's answer for one array field, truncated to its cap."""
+    values = data.get(field) or []
+    if not isinstance(values, list):
+        return []
+    return [str(v) for v in values[: MAX_ITEMS.get(field, 8)]]
+
 # Character budget for the body text shown to the model. Extraction reads the
 # top of a message, where the ask lives; the whole 16 KB tail buys little and
 # is paid for on every one of ~160 emails.
 MAX_BODY_CHARS = 4000
+
+# Generous, and it has to be. A reasoning model emits a thinking block before
+# the JSON, and that block is charged against max_tokens: at 700 the budget was
+# exhausted partway through the answer on 32 of 163 real emails, leaving an
+# unterminated string that no amount of parsing can recover. The response is
+# a few hundred tokens of JSON, so the headroom is nearly free — it is only
+# ever spent when it is needed.
+MAX_OUTPUT_TOKENS = 4000
 
 # What an id the model did NOT call primary is worth. Not zero — the mention is
 # real and regex-certain, it is just not what this email is about, and
@@ -431,29 +448,75 @@ def extract_entities(
     if client is None:
         client = _get_default_client()
 
-    response = client.messages.create(
-        model=_default_model(),
-        max_tokens=700,
-        system=SYSTEM_PROMPT,
-        messages=[
-            {
-                "role": "user",
-                "content": build_user_message(raw, body_chunks, ids, subject_ids),
-            }
-        ],
-        output_config={"format": {"type": "json_schema", "schema": RESPONSE_SCHEMA}},
-    )
-    text = next(block.text for block in response.content if block.type == "text")
-    data = json.loads(text)
+    data = _ask_model(client, raw, body_chunks, ids, subject_ids)
+    if data is None:
+        # Pass 2 failed. Return pass 1 rather than nothing: the header and
+        # regex mentions never needed a model, and discarding them because a
+        # model call went wrong is the worst available outcome — it cost 22 of
+        # 163 emails every mention they had, including the ones that were free
+        # and certain. The stage wrapper in pipeline.orchestrate cannot make
+        # this distinction; only this function knows half the answer is sound.
+        return deterministic
 
     confidence = _clamp(data.get("confidence"), default=0.8)
     llm_mentions = _mentions_from_llm(raw, data, confidence)
     judged = _apply_id_judgment(
         deterministic,
-        primary_ids=data.get("primary_ids") or [],
-        case_ids=data.get("case_ids") or [],
+        primary_ids=_capped(data, "primary_ids"),
+        case_ids=_capped(data, "case_ids"),
     )
     return judged + llm_mentions
+
+
+def _ask_model(
+    client: Any,
+    raw: RawEmail,
+    body_chunks: Sequence[Chunk],
+    ids: Sequence[Tuple[str, EntityKind]],
+    subject_ids: Sequence[str],
+) -> Optional[Dict[str, Any]]:
+    """Pass 2's one call. None on any failure, having logged why."""
+    try:
+        response = client.messages.create(
+            model=_default_model(),
+            max_tokens=MAX_OUTPUT_TOKENS,
+            system=SYSTEM_PROMPT,
+            messages=[
+                {
+                    "role": "user",
+                    "content": build_user_message(raw, body_chunks, ids, subject_ids),
+                }
+            ],
+            output_config={"format": {"type": "json_schema", "schema": RESPONSE_SCHEMA}},
+        )
+    except Exception as exc:
+        log.warning("extract pass 2 call failed for %s: %s", raw.email_id, exc)
+        return None
+
+    # Not `next(...)` without a default: a reasoning model's response can be a
+    # thinking block and nothing else, and a bare next() raises StopIteration,
+    # whose str() is the empty string. That surfaces as "extract failed for
+    # <id>: " with no reason at all, which is how 14 of these went unexplained.
+    text = next((b.text for b in response.content if b.type == "text"), None)
+    if not text:
+        log.warning(
+            "extract pass 2 returned no text for %s (blocks: %s, stop_reason=%s)",
+            raw.email_id,
+            [b.type for b in response.content],
+            getattr(response, "stop_reason", None),
+        )
+        return None
+
+    try:
+        data = json.loads(text)
+    except ValueError as exc:
+        log.warning(
+            "extract pass 2 returned unparseable JSON for %s (%d chars, "
+            "stop_reason=%s): %s",
+            raw.email_id, len(text), getattr(response, "stop_reason", None), exc,
+        )
+        return None
+    return data if isinstance(data, dict) else None
 
 
 def _clamp(value: Any, *, default: float) -> float:
@@ -474,8 +537,8 @@ def _mentions_from_llm(raw: RawEmail, data: Dict[str, Any], confidence: float) -
     out: List[Mention] = []
     seen: Set[str] = set()
     for field, kind in _LLM_KINDS:
-        for span in data.get(field) or []:
-            span = str(span).strip()
+        for span in _capped(data, field):
+            span = span.strip()
             if not span or "@" in span or find_ids(span):
                 continue
             key = normalize_name(span, kind)

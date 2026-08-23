@@ -241,6 +241,34 @@ class LlmPassTest(unittest.TestCase):
                 if target.get("type") == "string":
                     self.assertIn("maxLength", target)
 
+    def test_the_schema_declares_no_maxitems(self):
+        """Valid JSON Schema, honoured by ollama's constrained decoder, and
+        rejected outright by the Anthropic structured-output API:
+        400 "For 'array' type, property 'maxItems' is not supported".
+        The bound lives in MAX_ITEMS and is applied in code instead."""
+        from context.extract import MAX_ITEMS, RESPONSE_SCHEMA
+
+        for name, spec in RESPONSE_SCHEMA["properties"].items():
+            with self.subTest(name):
+                self.assertNotIn("maxItems", spec)
+                if spec.get("type") == "array":
+                    self.assertIn(name, MAX_ITEMS)
+
+    def test_an_overlong_array_is_truncated_in_code(self):
+        from context.extract import MAX_ITEMS
+
+        cap = MAX_ITEMS["projects"]
+        client = FakeClient(
+            llm_payload(projects=["Project {0}".format(i) for i in range(cap + 5)])
+        )
+        mentions = extract_entities(raw(), [body_chunk("text")], client=client)
+        self.assertEqual(len(keys(mentions, EntityKind.PROJECT)), cap)
+
+    def test_a_non_list_array_field_does_not_raise(self):
+        client = FakeClient(llm_payload(projects="not a list", primary_ids=None))
+        mentions = extract_entities(raw(), [body_chunk("text")], client=client)
+        self.assertEqual(keys(mentions, EntityKind.PROJECT), [])
+
     def test_model_is_not_shown_quoted_or_signature_text(self):
         client = FakeClient(llm_payload())
         chunks = [
@@ -348,6 +376,80 @@ class LlmPassTest(unittest.TestCase):
         )
         self.assertIn("case:CS40350", {m.entity_id for m in mentions})
         self.assertIn("org:stridecore", {m.entity_id for m in mentions})
+
+
+class Pass2FailureTest(unittest.TestCase):
+    """A model failure must not cost an email the mentions that were free.
+
+    Discarding pass 1 because pass 2 went wrong left 22 of 163 real emails with
+    zero mentions — including the header and regex ones, which never needed a
+    model and were never in doubt.
+    """
+
+    class _Broken:
+        """A client whose response is unusable in a specific way."""
+
+        def __init__(self, kind):
+            self.kind = kind
+            self.messages = self
+
+        def create(self, **kwargs):
+            if self.kind == "raises":
+                raise RuntimeError("overloaded")
+            return self
+
+        @property
+        def content(self):
+            if self.kind == "truncated":
+                return [_Block('{"reason":"the model ran out of bud')]
+            if self.kind == "thinking_only":
+                return [_Block(None, "thinking")]
+            if self.kind == "not_an_object":
+                return [_Block("[1, 2, 3]")]
+            return []
+
+        stop_reason = "max_tokens"
+
+    def deterministic_survives(self, kind):
+        mentions = extract_entities(
+            raw(subject="[CS-40350] RMA", sender="a@stridecore.com"),
+            [body_chunk("real body text")],
+            client=self._Broken(kind),
+        )
+        ids = {m.entity_id for m in mentions}
+        self.assertIn("case:CS40350", ids)
+        self.assertIn("org:stridecore", ids)
+        self.assertTrue(all(m.source != MentionSource.LLM for m in mentions))
+
+    def test_truncated_json(self):
+        self.deterministic_survives("truncated")
+
+    def test_a_response_with_only_a_thinking_block(self):
+        """A bare next() over the content blocks raises StopIteration, whose
+        str() is empty — which is how 14 of these logged no reason at all."""
+        self.deterministic_survives("thinking_only")
+
+    def test_an_api_error(self):
+        self.deterministic_survives("raises")
+
+    def test_json_that_is_not_an_object(self):
+        self.deterministic_survives("not_an_object")
+
+    def test_no_content_blocks(self):
+        self.deterministic_survives("empty")
+
+    def test_the_output_budget_leaves_room_for_a_thinking_block(self):
+        """A reasoning model's thinking is charged against max_tokens. At 700
+        the budget ran out partway through the JSON on 32 of 163 emails."""
+        from context.extract import MAX_OUTPUT_TOKENS
+
+        self.assertGreaterEqual(MAX_OUTPUT_TOKENS, 2000)
+
+
+class _Block:
+    def __init__(self, text, type="text"):
+        self.type = type
+        self.text = text
 
 
 class RealShapeTest(unittest.TestCase):
