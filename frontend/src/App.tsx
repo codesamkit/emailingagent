@@ -10,9 +10,10 @@ import { EmailDetail } from './components/detail/EmailDetail';
 import { CalendarView } from './components/calendar/CalendarView';
 import { AnalyticsView } from './components/analytics/AnalyticsView';
 import { SettingsView } from './components/settings/SettingsView';
+import { TodoView } from './components/todo/TodoView';
 
 export const App: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<'inbox' | 'calendar' | 'analytics' | 'settings'>('inbox');
+  const [activeTab, setActiveTab] = useState<'inbox' | 'calendar' | 'todo' | 'analytics' | 'settings'>('inbox');
   const [emails, setEmails] = useState<EmailItem[]>([]);
   const [selectedEmail, setSelectedEmail] = useState<EmailItem | null>(null);
   const [stats, setStats] = useState<InboxStats>({
@@ -253,6 +254,8 @@ export const App: React.FC = () => {
           {activeTab === 'calendar' && (
             <CalendarView />
           )}
+
+          {activeTab === 'todo' && <TodoView />}
 
           {activeTab === 'analytics' && <AnalyticsView stats={stats} />}
 

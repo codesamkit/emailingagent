@@ -10,12 +10,13 @@ import {
   FileText,
   Clock,
   Mail,
+  ListChecks,
 } from 'lucide-react';
 import { InboxStats } from '../../types/email';
 
 interface SidebarProps {
-  activeTab: 'inbox' | 'calendar' | 'analytics' | 'settings';
-  onTabChange: (tab: 'inbox' | 'calendar' | 'analytics' | 'settings') => void;
+  activeTab: 'inbox' | 'calendar' | 'todo' | 'analytics' | 'settings';
+  onTabChange: (tab: 'inbox' | 'calendar' | 'todo' | 'analytics' | 'settings') => void;
   stats: InboxStats;
   onQuickFilter: (filterType: string) => void;
   activeQuickFilter: string;
@@ -80,6 +81,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   {stats.scheduling}
                 </span>
               )}
+            </button>
+
+            <button
+              onClick={() => onTabChange('todo')}
+              className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm font-medium transition-all ${
+                activeTab === 'todo'
+                  ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-md'
+                  : 'text-slate-700 hover:bg-slate-200/70 hover:text-slate-900'
+              }`}
+            >
+              <ListChecks className="w-4 h-4" />
+              <span>To-Do</span>
             </button>
 
             <button

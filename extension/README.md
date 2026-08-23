@@ -13,6 +13,11 @@ A Manifest V3 extension that surfaces Valence (the email agent) inside Gmail:
   the agent's order: sort by importance, reply effort (quick first), category,
   or newest. Clicking a row opens that thread in Gmail. (Gmail's own rows
   can't be reordered, so the sorted view lives here.)
+- **To-Do tab** — the derived to-do list (`pipeline/todo.py`): extracted
+  action items plus a "needs your reply" marker per unreplied, non-no-reply
+  email. Each row has a checkbox; checking it off calls
+  `POST /api/todos/{id}/complete` and the row disappears immediately. Clicking
+  the row text (not the checkbox) opens that thread in Gmail.
 - **Reply effort** — quick / moderate / involved, derived from the reply
   outline's size (`drafting/effort.py`, no LLM call); shown as a chip and
   sortable in both the panel and the Valence review UI.

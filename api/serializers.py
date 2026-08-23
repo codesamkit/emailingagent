@@ -87,6 +87,7 @@ def email_to_json(email: ProcessedEmail, include_calendar: bool = False) -> Dict
         "importanceJustification": email.importance_justification,
         "summary": email.summary,
         "mentionedDates": email.mentioned_dates or [],
+        "actionItems": email.action_items or [],
         "category": email.category,
         "isSchedulingRelated": email.is_scheduling_related,
         "hasCalendarContext": email.calendar_context is not None,
@@ -103,3 +104,20 @@ def email_to_json(email: ProcessedEmail, include_calendar: bool = False) -> Dict
 
 def emails_to_json(emails: List[ProcessedEmail]) -> List[Dict[str, Any]]:
     return [email_to_json(e) for e in emails]
+
+
+def todo_to_json(row: Dict[str, Any]) -> Dict[str, Any]:
+    """One row of pipeline/todo.py's list_open() (a joined dict, not a
+    dataclass) as the frontend/extension see it."""
+    return {
+        "todoId": row["todo_id"],
+        "emailId": row["email_id"],
+        "threadId": row["thread_id"],
+        "kind": row["kind"],
+        "text": row["text"],
+        "createdAt": row["created_at"],
+        "subject": row["subject"] or "",
+        "sender": row["sender"],
+        "importanceScore": row["importance_score"],
+        "importanceLevel": row["importance_level"],
+    }

@@ -33,7 +33,7 @@ from pipeline import persist
 
 from .auth import require_token
 from .filters import SORT_FIELDS, apply_filters, sort_emails
-from .serializers import email_to_json, emails_to_json
+from .serializers import email_to_json, emails_to_json, todo_to_json
 
 log = logging.getLogger(__name__)
 
@@ -611,6 +611,30 @@ def get_agent_conversation(conversation_id: str) -> Dict[str, Any]:
         "conversationId": conversation_id,
         "messages": agent_conversation.history(conversation_id, db_path=DB_PATH),
     }
+
+
+@app.get("/api/todos", dependencies=[Depends(require_token)])
+def list_todos() -> Dict[str, Any]:
+    """The derived to-do list: action items extracted from email bodies plus
+    a "needs a reply" marker per unreplied email — see pipeline/todo.py.
+    Open items only; completing one (below) removes it from this list."""
+    from pipeline import todo
+
+    items = todo.list_open(DB_PATH)
+    return {"total": len(items), "todos": [todo_to_json(i) for i in items]}
+
+
+@app.post("/api/todos/{todo_id}/complete", dependencies=[Depends(require_token)])
+def complete_todo(todo_id: str) -> Dict[str, Any]:
+    """Checks off one to-do item. Human-triggered only, like every other
+    mutating endpoint in this file — the pipeline never marks one done."""
+    from pipeline import todo
+
+    if not todo.complete(todo_id, DB_PATH):
+        raise HTTPException(
+            status_code=404, detail="No open todo {0!r}".format(todo_id)
+        )
+    return {"ok": True}
 
 
 @app.get("/api/stats", dependencies=[Depends(require_token)])

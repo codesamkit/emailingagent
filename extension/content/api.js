@@ -86,6 +86,9 @@ const EmailAgent = (() => {
       return result;
     },
     expandDraft: (emailId) => call(`/api/emails/${encodeURIComponent(emailId)}/expand`, "POST"),
+    // To-do list: extracted action items + "needs a reply" markers.
+    getTodos: () => call("/api/todos"),
+    completeTodo: (todoId) => call(`/api/todos/${encodeURIComponent(todoId)}/complete`, "POST"),
     // Human-approval flow for proposed calendar events. Approve is the one
     // call that writes to Google Calendar — only ever fired by a user click.
     approveEvent: (emailId) =>

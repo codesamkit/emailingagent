@@ -43,6 +43,7 @@ export interface EmailItem {
   importanceLevel: ImportanceLevel | null;
   importanceJustification: string | null;
   summary: string | null;
+  actionItems?: string[];
   isSchedulingRelated: boolean | null;
   hasCalendarContext: boolean;
   calendarContext?: CalendarContext | null;
@@ -52,6 +53,21 @@ export interface EmailItem {
   processedAt: string | null;
   body?: string;
   isStale?: boolean;
+}
+
+export type TodoKind = 'action_item' | 'needs_reply';
+
+export interface TodoItem {
+  todoId: string;
+  emailId: string;
+  threadId: string;
+  kind: TodoKind;
+  text: string;
+  createdAt: string;
+  subject: string;
+  sender: string;
+  importanceScore: number | null;
+  importanceLevel: ImportanceLevel | null;
 }
 
 export interface InboxStats {

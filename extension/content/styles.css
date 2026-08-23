@@ -407,3 +407,53 @@
 }
 
 .ea-ask-input:disabled { background: var(--ea-surface); color: var(--ea-low); }
+
+/* ---- to-do tab ---- */
+
+.ea-panel-todo { overflow-y: auto; padding: 10px 12px 12px; }
+.ea-collapsed .ea-panel-todo { display: none; }
+
+.ea-todo-list { display: flex; flex-direction: column; gap: 4px; }
+
+.ea-todo-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 7px 8px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.ea-todo-row:hover { background: var(--ea-surface-2); }
+.ea-todo-completing { opacity: 0.4; pointer-events: none; }
+
+.ea-todo-check {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  margin-top: 1px;
+  border: 2px solid var(--ea-border);
+  border-radius: 4px;
+  background: var(--ea-surface);
+  cursor: pointer;
+  padding: 0;
+}
+
+.ea-todo-check:hover { border-color: var(--ea-accent); background: var(--ea-accent-bg); }
+
+.ea-todo-text-wrap { min-width: 0; }
+
+.ea-todo-text {
+  font: 12px/1.4 Roboto, Arial, sans-serif;
+  color: var(--ea-text);
+  font-weight: 500;
+}
+
+.ea-todo-meta {
+  font-size: 11px;
+  color: var(--ea-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}

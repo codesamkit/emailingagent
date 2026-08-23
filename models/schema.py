@@ -151,6 +151,15 @@ class ProcessedEmail:
     # None until summarized, [] once summarized if none were mentioned.
     mentioned_dates: Optional[list[str]] = None
 
+    # Track B — action-item extraction (summarization/action_items.py).
+    # Concrete tasks/asks the email requires of the recipient, distinct from
+    # `summary` (which deliberately omits inferred action items) and from
+    # `reply_outline` (only ever set for read, non-no-reply emails — this
+    # field is extracted for every email, so a no-reply notification with a
+    # real deadline still surfaces one). None until extracted, [] once
+    # extracted if the email asked nothing of the recipient.
+    action_items: Optional[list[str]] = None
+
     # Track B — topic categorization (classification/categorize.py).
     # A short free-form lowercase topic (1-3 words, e.g. "job application",
     # "order shipping"), normalized in code. None until the stage has run.
@@ -397,3 +406,38 @@ class ContextPack:
     anchor_email_id: Optional[str] = None
     sections: list[ContextSection] = field(default_factory=list)
     total_chars: int = 0
+
+
+# --- To-do list (pipeline/todo.py) ------------------------------------------
+#
+# A derived, user-checkable list layered on top of ProcessedEmail — not a
+# new track output. Two kinds of row: one per string in `action_items`, and
+# one "needs a reply" marker per email that is not no-reply and hasn't been
+# replied to yet. See pipeline/todo.py's module docstring for the stable-id
+# scheme that lets a completed item survive the next pipeline re-run.
+
+
+class TodoKind(str, Enum):
+    ACTION_ITEM = "action_item"
+    NEEDS_REPLY = "needs_reply"
+
+
+class TodoStatus(str, Enum):
+    OPEN = "open"
+    DONE = "done"
+
+
+@dataclass
+class TodoItem:
+    """One row of the derived to-do list. `todo_id` is a stable hash of
+    (email_id, kind, text) — see pipeline/todo.py:make_todo_id — not a
+    random id, so re-deriving the same item on a later pipeline run
+    recognizes it instead of minting a duplicate open row."""
+
+    todo_id: str
+    email_id: str
+    kind: TodoKind
+    text: str
+    status: TodoStatus = TodoStatus.OPEN
+    created_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None

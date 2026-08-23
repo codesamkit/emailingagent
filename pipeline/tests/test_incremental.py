@@ -40,6 +40,7 @@ def complete(email_id="e1", read_status=ReadStatus.UNREAD, **overrides) -> Proce
         importance_justification="direct ask",
         summary="A short summary.",
         mentioned_dates=[],
+        action_items=[],
         category="team planning",
         is_scheduling_related=False,
         reply_outline=None,
