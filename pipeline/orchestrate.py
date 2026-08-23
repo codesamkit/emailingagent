@@ -480,6 +480,46 @@ class Pipeline:
             )
             return
 
+        # Ask the CALENDAR, not the database, whether this already exists --
+        # see calendaring.events.check_slot for why the database can't answer.
+        existing_events = self._events_around(record, event)
+        if existing_events is None:
+            log.info(
+                "email_id=%s: not auto-adding %r - no calendar read to check against",
+                record.email_id,
+                event.title,
+            )
+            return
+
+        from calendaring.events import SlotCheck, check_slot
+
+        verdict, clash = check_slot(event, existing_events)
+        if verdict is SlotCheck.DUPLICATE:
+            # Already on the calendar: adopt its id rather than creating a
+            # second copy, so a re-run converges instead of accumulating.
+            record.proposed_event = replace(
+                event, google_event_id=clash.get("event_id"), error=None
+            )
+            record.proposed_event_status = ProposedEventStatus.APPROVED
+            log.info(
+                "email_id=%s: %r already on the calendar; adopted %s",
+                record.email_id,
+                event.title,
+                clash.get("event_id"),
+            )
+            return
+        if verdict is SlotCheck.CONFLICT:
+            # Left SUGGESTED on purpose: a real meeting landing on top of
+            # something the user already has is theirs to resolve, not the
+            # pipeline's to double-book.
+            log.info(
+                "email_id=%s: not auto-adding %r - conflicts with %r",
+                record.email_id,
+                event.title,
+                clash.get("summary"),
+            )
+            return
+
         result = self._create_event(event)
         record.proposed_event = result
         if result.google_event_id is None:
@@ -493,6 +533,31 @@ class Pipeline:
             return
         record.proposed_event_status = ProposedEventStatus.APPROVED
         log.info("email_id=%s: auto-added %r to Calendar", record.email_id, event.title)
+
+    def _events_around(self, record, event):
+        """Existing events covering `event`'s slot, or None if unknowable.
+
+        Prefers the context the calendar stage already fetched for this email
+        -- free, and covers the common case -- and only re-reads when the
+        proposal falls outside that window. Returns None rather than an empty
+        list when neither is available, so the caller declines to create blind
+        instead of assuming the slot is free.
+        """
+        context = record.calendar_context
+        if (
+            context is not None
+            and context.range_start is not None
+            and context.range_end is not None
+            and context.range_start <= event.start
+            and event.end <= context.range_end
+        ):
+            return context.existing_events or []
+        if self._calendar_context is None:
+            return None
+        fetched = self._run_stage(
+            "calendar", record.email_id, self._calendar_context, event.start, event.end
+        )
+        return (fetched.existing_events or []) if fetched is not None else None
 
     def _fetch_calendar(self, now: Optional[datetime] = None):
         """One calendar window shared by every scheduling email in a run."""

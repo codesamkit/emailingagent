@@ -472,3 +472,120 @@ class TestAutoAdd:
         )
         assert calls == []
         assert result.proposed_event_status == ProposedEventStatus.SUGGESTED
+
+    def _ctx(self, events):
+        """Calendar stage stub whose window always covers the proposal."""
+        def stage(start, end):
+            return CalendarContext(
+                range_start=NOW - timedelta(days=1),
+                range_end=NOW + timedelta(days=30),
+                existing_events=list(events),
+            )
+        return stage
+
+    def _existing(self, summary, start, minutes=30, event_id="gcal-existing", all_day=False):
+        return {
+            "summary": summary, "start": start, "end": start + timedelta(minutes=minutes),
+            "all_day": all_day, "event_id": event_id,
+        }
+
+    def test_an_event_already_on_the_calendar_is_adopted_not_duplicated(self):
+        """The bug this guards: auto-add was idempotent against the database,
+        not the calendar, so a wiped or reprocessed record created a second
+        copy and orphaned the first."""
+        start = NOW + timedelta(days=1)
+        proposed = ProposedEvent(title="Sync", start=start, end=start + timedelta(minutes=30))
+        calls = []
+        result = full_pipeline(
+            scheduling_gate=lambda e: True,
+            calendar_context=self._ctx([self._existing("Sync", start, event_id="already-there")]),
+            propose_event=lambda p, r: (proposed, ProposedEventStatus.SUGGESTED),
+            create_event=lambda e: calls.append(e),
+        ).process_one(raw(), now=NOW)
+
+        assert calls == []
+        assert result.proposed_event_status == ProposedEventStatus.APPROVED
+        assert result.proposed_event.google_event_id == "already-there"
+
+    def test_a_conflicting_event_is_left_for_the_user(self):
+        start = NOW + timedelta(days=1)
+        proposed = ProposedEvent(title="Sync", start=start, end=start + timedelta(minutes=30))
+        calls = []
+        result = full_pipeline(
+            scheduling_gate=lambda e: True,
+            calendar_context=self._ctx([self._existing("Dentist", start)]),
+            propose_event=lambda p, r: (proposed, ProposedEventStatus.SUGGESTED),
+            create_event=lambda e: calls.append(e),
+        ).process_one(raw(), now=NOW)
+
+        assert calls == []
+        assert result.proposed_event_status == ProposedEventStatus.SUGGESTED
+
+    def test_an_all_day_event_does_not_block_the_slot(self):
+        """An all-day event covers the whole day, so treating it as a conflict
+        would block every proposal on that date."""
+        start = NOW + timedelta(days=1)
+        proposed = ProposedEvent(title="Sync", start=start, end=start + timedelta(minutes=30))
+        result = full_pipeline(
+            scheduling_gate=lambda e: True,
+            calendar_context=self._ctx([self._existing("PTO", start, all_day=True)]),
+            propose_event=lambda p, r: (proposed, ProposedEventStatus.SUGGESTED),
+            create_event=lambda e: replace(e, google_event_id="gcal-new"),
+        ).process_one(raw(), now=NOW)
+        assert result.proposed_event_status == ProposedEventStatus.APPROVED
+
+    def test_a_free_slot_still_creates(self):
+        start = NOW + timedelta(days=1)
+        proposed = ProposedEvent(title="Sync", start=start, end=start + timedelta(minutes=30))
+        result = full_pipeline(
+            scheduling_gate=lambda e: True,
+            calendar_context=self._ctx([self._existing("Dentist", start + timedelta(hours=4))]),
+            propose_event=lambda p, r: (proposed, ProposedEventStatus.SUGGESTED),
+            create_event=lambda e: replace(e, google_event_id="gcal-new"),
+        ).process_one(raw(), now=NOW)
+        assert result.proposed_event_status == ProposedEventStatus.APPROVED
+        assert result.proposed_event.google_event_id == "gcal-new"
+
+    def test_auto_add_is_idempotent_across_runs(self):
+        """Run the pipeline twice against a calendar that remembers what was
+        created -- the regression that would have caught the duplicates."""
+        start = NOW + timedelta(days=1)
+        proposed = ProposedEvent(title="Sync", start=start, end=start + timedelta(minutes=30))
+        calendar = []
+
+        def creator(event):
+            calendar.append(self._existing(event.title, event.start, event_id="gcal-1"))
+            return replace(event, google_event_id="gcal-1")
+
+        def ctx(s_, e_):
+            return CalendarContext(
+                range_start=NOW - timedelta(days=1),
+                range_end=NOW + timedelta(days=30),
+                existing_events=list(calendar),
+            )
+
+        for _ in range(3):
+            # existing=None each time: the database has forgotten, the way a
+            # wipe or reprocess leaves it.
+            full_pipeline(
+                scheduling_gate=lambda e: True,
+                calendar_context=ctx,
+                propose_event=lambda p, r: (proposed, ProposedEventStatus.SUGGESTED),
+                create_event=creator,
+            ).process_one(raw(), now=NOW)
+
+        assert len(calendar) == 1
+
+    def test_no_calendar_read_means_no_blind_create(self):
+        start = NOW + timedelta(days=1)
+        proposed = ProposedEvent(title="Sync", start=start, end=start + timedelta(minutes=30))
+        calls = []
+        result = Pipeline(
+            classify=lambda e: (False, "personal sender"),
+            scheduling_gate=lambda e: True,
+            propose_event=lambda p, r: (proposed, ProposedEventStatus.SUGGESTED),
+            create_event=lambda e: calls.append(e),
+        ).process_one(raw(), now=NOW)
+        assert calls == []
+        assert result.proposed_event_status == ProposedEventStatus.SUGGESTED
+
