@@ -201,10 +201,13 @@ def rescore_sender(sender: str, db_path: Optional[Path] = None) -> int:
 def refresh_one(email_id: str, db_path: Optional[Path] = None):
     """Re-fetch a single message from Gmail and run whatever stages it needs.
 
-    The fast path behind the extension's open-email view: when the user opens
-    a message, Gmail flips it to read, and this picks up the flip (unlocking
-    the reply outline) in seconds instead of waiting for the next full
-    refresh. Also handles brand-new mail the bulk ingest hasn't seen.
+    The fast path for brand-new mail the bulk ingest hasn't seen yet, and a
+    safety net that re-syncs one message's read status on demand. Drafting
+    no longer waits on read status (drafting.outline.is_eligible is
+    read-status-blind — see pipeline/incremental.py), so this runs every
+    stage stages_for plans, expand included: mail caught by this live path
+    gets its full draft immediately rather than a bullet list now and a
+    draft two minutes later on the next bulk /api/refresh poll.
 
     Raises googleapiclient.errors.HttpError (404) for an unknown message id
     and RuntimeError when Gmail auth is unavailable non-interactively.
@@ -220,16 +223,6 @@ def refresh_one(email_id: str, db_path: Optional[Path] = None):
 
     existing = {e.email_id: e for e in persist.all_processed(db_path)}
     stages = incremental.stages_for(raw, existing.get(email_id))
-    # Keep this call fast: it runs synchronously while the user is staring at
-    # "Generating reply outline..." right after opening a previously-unread
-    # email. Full-draft expansion is a second, separate LLM call on top of
-    # the outline's own — doubling this live wait for a draft the user isn't
-    # looking at yet. The extension's periodic /api/refresh poll (every 2
-    # minutes, see extension/content/api.js's PIPELINE_REFRESH_MS) picks up
-    # the missing draft in the background instead; the on-demand /expand
-    # endpoint still covers the rare case someone opens the outline before
-    # that poll runs.
-    stages = tuple(s for s in stages if s != "expand")
     if stages:
         pipeline = Pipeline.with_defaults(stages=stages)
         persist.upsert(pipeline.process([raw], existing=existing), db_path)

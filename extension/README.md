@@ -7,8 +7,10 @@ A Manifest V3 extension that surfaces Valence (the email agent) inside Gmail:
   Hover the badge for the justification.
 - **Open email** — a floating panel (bottom-right) with the summary,
   importance reasoning, topic, no-reply flag, calendar context (suggested
-  slots + your upcoming events + busy blocks) for scheduling emails, and the
-  reply outline with an *Expand to full draft* button (copies to clipboard).
+  slots + your upcoming events + busy blocks) for scheduling emails, and a
+  complete reply draft, ready to copy. The draft is prepared when the email
+  arrives, not when you open it or ask for one — no outline to expand, no
+  tone to pick.
 - **Inbox tab** — the panel's second tab lists the whole processed inbox in
   the agent's order: sort by importance, reply effort (quick first), category,
   or newest. Clicking a row opens that thread in Gmail. (Gmail's own rows

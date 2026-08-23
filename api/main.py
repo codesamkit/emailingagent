@@ -207,8 +207,9 @@ def edit_outline(
 
     Rejects edits to an email that is not outline-eligible. The gate is a
     correctness rule, not a UI affordance — a client that has drifted, or a
-    direct API call, must not be able to attach a reply outline to an unread
-    or no-reply email.
+    direct API call, must not be able to attach a reply outline to a
+    no-reply or not-yet-classified email. Read status has no bearing on
+    eligibility.
     """
     email = persist.get(email_id, DB_PATH)
     if email is None:
@@ -222,7 +223,7 @@ def edit_outline(
             status_code=409,
             detail=(
                 "This email is not eligible for a reply outline ({0}). "
-                "Unread and no-reply emails never receive one.".format(status.value)
+                "No-reply and not-yet-classified emails never receive one.".format(status.value)
             ),
         )
 

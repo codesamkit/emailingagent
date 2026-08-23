@@ -6,8 +6,12 @@ Two kinds of row:
     ProcessedEmail.action_items (summarization/action_items.py). Per thread,
     not per email: a task restated on every "Re:" is one task.
   - needs_reply — one per email that still owes a reply, i.e. passes
-    `drafting.outline.is_eligible` (read, not no-reply, classified) and hasn't
-    been sent yet. The read gate matters: without it this fires on every
+    `drafting.outline.is_eligible` (not no-reply, classified) AND has been
+    read, and hasn't been sent yet. Drafting itself no longer waits for the
+    email to be read — a draft is prepared the moment it arrives — but this
+    marker still does: it means "you've seen this and still haven't
+    replied," not "a draft exists." The read check matters: without it this
+    fires on every
     unread email and the list becomes a copy of the inbox.
 
 `todo_id` is a stable hash of (email_id, kind, text) rather than a random
@@ -38,7 +42,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
 from models import db
-from models.schema import ProcessedEmail, ReplyOutlineStatus, TodoKind, TodoStatus
+from models.schema import ProcessedEmail, ReadStatus, ReplyOutlineStatus, TodoKind, TodoStatus
 from summarization.action_items import is_meaningful
 
 
@@ -54,19 +58,24 @@ def make_todo_id(email_id: str, kind: TodoKind, text: str) -> str:
 def _needs_reply(email: ProcessedEmail) -> bool:
     """Whether a reply is still owed on this email.
 
-    Reuses `drafting.outline.is_eligible` -- the gate the whole product is
-    built on (read AND not no-reply AND classified) -- rather than re-deriving
-    a weaker version of it. The hand-rolled check this replaces omitted read
-    status, so in a mailbox that is 161-of-163 unread it fired on essentially
-    every email and the to-do list became a copy of the inbox.
-
-    `is_eligible` is also what `api/serializers.py` reports as
-    `outlineEligible`, so the list and the badge can no longer disagree.
+    Reuses `drafting.outline.is_eligible` for the not-no-reply/classified
+    half rather than re-deriving a weaker version of it -- `is_eligible` is
+    also what `api/serializers.py` reports as `outlineEligible`, so the two
+    can't quietly disagree on that part. But `is_eligible` no longer checks
+    read status (drafting prepares on arrival, not on open), and this marker
+    still needs to: "needs a reply" means the user has seen the email and
+    hasn't answered it, not merely that a draft exists. Without the read
+    check here, a mailbox that's 161-of-163 unread fires on essentially
+    every email and the to-do list becomes a copy of the inbox.
     """
     from drafting.outline import is_eligible
 
     eligible, _ = is_eligible(email)
-    return eligible and email.reply_outline_status != ReplyOutlineStatus.SENT
+    return (
+        eligible
+        and email.read_status == ReadStatus.READ
+        and email.reply_outline_status != ReplyOutlineStatus.SENT
+    )
 
 
 def _needs_reply_text(email: ProcessedEmail) -> str:

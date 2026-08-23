@@ -1,5 +1,7 @@
-"""refresh_one: the live single-email path the extension calls the moment a
-previously-unread email is opened. Must stay fast — no expand stage."""
+"""refresh_one: the live single-email path for brand-new mail the bulk
+pipeline hasn't seen yet. Runs every stage stages_for plans, expand
+included — drafting no longer waits on read status, so this is the one
+place a just-arrived email's full draft gets prepared synchronously."""
 
 from __future__ import annotations
 
@@ -38,13 +40,10 @@ def _stub_gmail(monkeypatch):
     monkeypatch.setattr(parse_module, "to_raw_email", lambda message: _raw_email(message["id"]))
 
 
-def test_refresh_one_never_requests_the_expand_stage(tmp_path, monkeypatch):
-    """The regression this guards: adding the auto-expand pipeline stage
-    made a previously-unread email's live refresh silently run a second,
-    synchronous LLM call (outline, then expand) — doubling the wait behind
-    the extension's "Generating reply outline..." message. refresh_one must
-    strip "expand" from whatever incremental.stages_for plans, even though
-    a read-status flip legitimately plans ("outline", "expand")."""
+def test_refresh_one_requests_the_expand_stage_for_brand_new_mail(tmp_path, monkeypatch):
+    """A never-before-seen, eligible email plans both outline and expand —
+    and refresh_one must run both, not strip expand, so the draft this live
+    path produces is actually complete rather than a bare outline."""
     db_path = tmp_path / "t.db"
     existing = ProcessedEmail(
         email_id="e1", thread_id="t1", sender="Dana <dana@example.com>",
@@ -63,9 +62,10 @@ def test_refresh_one_never_requests_the_expand_stage(tmp_path, monkeypatch):
             return [
                 ProcessedEmail(
                     email_id="e1", thread_id="t1", sender="Dana <dana@example.com>",
-                    subject="Hi", received_at=NOW, read_status=ReadStatus.READ,
+                    subject="Hi", received_at=NOW, read_status=ReadStatus.UNREAD,
                     reply_outline=["Confirm the figures"],
                     reply_outline_status=ReplyOutlineStatus.SUGGESTED,
+                    reply_draft="Hi,\n\nConfirmed.\n\nBest,",
                     proposed_event_status=ProposedEventStatus.NONE,
                     processed_at=NOW,
                 )
@@ -79,10 +79,10 @@ def test_refresh_one_never_requests_the_expand_stage(tmp_path, monkeypatch):
 
     result = refresh.refresh_one("e1", db_path)
 
-    assert "expand" not in seen_stages["stages"]
     assert "outline" in seen_stages["stages"]
+    assert "expand" in seen_stages["stages"]
     assert result.reply_outline == ["Confirm the figures"]
-    assert result.reply_draft is None  # left for the next background poll
+    assert result.reply_draft == "Hi,\n\nConfirmed.\n\nBest,"
 
 
 def test_refresh_one_skips_the_pipeline_entirely_when_nothing_is_due(tmp_path, monkeypatch):

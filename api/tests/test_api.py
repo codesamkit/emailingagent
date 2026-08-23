@@ -187,8 +187,9 @@ class TestEligibilityIsServerComputed:
         body = client.get("/api/emails/read-eligible").json()
         assert body["outlineEligible"] is True
 
-    def test_unread_is_not_eligible(self, client):
-        assert client.get("/api/emails/unread").json()["outlineEligible"] is False
+    def test_unread_is_still_eligible(self, client):
+        """Drafting eligibility no longer depends on read status."""
+        assert client.get("/api/emails/unread").json()["outlineEligible"] is True
 
     def test_no_reply_is_not_eligible(self, client):
         body = client.get("/api/emails/no-reply").json()
@@ -287,12 +288,12 @@ class TestEditOutline:
                             json={"outline": ["Real", "   ", ""]}).json()
         assert body["replyOutline"] == ["Real"]
 
-    def test_rejects_edit_on_unread_email(self, client):
-        """The gate is a correctness rule, not a UI affordance — a drifted
-        client or a direct API call must not get past it."""
+    def test_allows_edit_on_an_unread_but_eligible_email(self, client):
+        """Drafting eligibility no longer depends on read status — an unread,
+        not-no-reply email is eligible, so editing its outline succeeds."""
         response = client.patch("/api/emails/unread/outline", json={"outline": ["x"]})
-        assert response.status_code == 409
-        assert "not eligible" in response.json()["detail"]
+        assert response.status_code == 200
+        assert response.json()["replyOutline"] == ["x"]
 
     def test_rejects_edit_on_no_reply_email(self, client):
         response = client.patch("/api/emails/no-reply/outline", json={"outline": ["x"]})

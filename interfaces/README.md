@@ -255,10 +255,11 @@ def generate_reply_outline(
     raw: RawEmail,
 ) -> tuple[list[str] | None, ReplyOutlineStatus]:
     """Code-level gate BEFORE any LLM call:
-      - read_status != READ            -> (None, ReplyOutlineStatus.NONE)
       - is_no_reply == True            -> (None, ReplyOutlineStatus.NOT_APPLICABLE)
+      - is_no_reply is None            -> (None, ReplyOutlineStatus.NONE) — unclassified
       - else                           -> generate outline bullets,
                                            (bullets, ReplyOutlineStatus.SUGGESTED)
+    Read status is not part of this gate — drafting runs on arrival, not on open.
     When processed.is_scheduling_related is True, calls
     calendaring.suggest.suggest_available_slots (via processed.calendar_context,
     already populated by the pipeline) and folds the slots into a bullet
@@ -561,12 +562,14 @@ def recent(limit=20) -> list[dict]: ...
 
 ## Notes on gating (applies to Drafting)
 
-`generate_reply_outline` must check `read_status` and `is_no_reply` with a
-plain `if` before touching any LLM client — not via a prompt instruction
-telling the model to skip ineligible emails. This is a hard correctness
-requirement (see `CONTEXT.md`'s design rationale) and Phase 5's tests must
-assert it directly (e.g. by asserting the LLM client is never invoked for
-unread/no-reply fixtures, not just asserting the output is null).
+`generate_reply_outline` must check `is_no_reply` with a plain `if` before
+touching any LLM client — not via a prompt instruction telling the model to
+skip ineligible emails. This is a hard correctness requirement (see
+`CONTEXT.md`'s design rationale) and Phase 5's tests must assert it directly
+(e.g. by asserting the LLM client is never invoked for no-reply/unclassified
+fixtures, not just asserting the output is null). Read status is
+deliberately NOT part of this gate — drafting runs as soon as an email
+arrives and clears classification, not when the user opens it.
 
 ---
 

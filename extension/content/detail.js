@@ -1,11 +1,14 @@
-// The floating agent panel, two tabs:
+// The floating agent panel, four tabs:
 //  - Email: the open message's analysis — summary, importance, effort,
-//    no-reply flag, calendar context, reply outline with expand-to-draft.
-//    Opening an unread email triggers a fast single-message refresh, so the
-//    read flip is picked up and the outline appears without a manual run.
+//    no-reply flag, calendar context, and a complete reply draft. The draft
+//    is prepared when the email arrives, not when it's opened (drafting/
+//    outline.py's is_eligible doesn't gate on read status) — this tab just
+//    displays it. A live single-message refresh only fires as a fallback,
+//    for mail the backend genuinely hasn't reached yet.
 //  - Inbox: the whole processed inbox in OUR order (importance / effort /
 //    category / newest) — Gmail's own rows can't be reordered, so the sorted
 //    view lives here; clicking a row opens that thread in Gmail.
+//  - Ask / To-Do: see their own render functions below.
 //
 // Each open message renders a node carrying data-legacy-message-id (hex id
 // == ProcessedEmail.email_id). The panel is fixed-position rather than woven
@@ -191,23 +194,27 @@
       }
     }
 
-    if (email.replyOutline?.length) {
-      const sec = section("Reply outline");
-      const list = el("ul", "ea-list");
-      email.replyOutline.forEach((line) => list.appendChild(el("li", null, line)));
-      sec.appendChild(list);
-
-      const button = el("button", "ea-button", "Expand to full draft");
-      button.addEventListener("click", () => expand(email.emailId, button, sec));
-      sec.appendChild(button);
+    if (email.replyDraft) {
+      const sec = section("Reply draft");
+      const box = el("div", "ea-draft");
+      box.appendChild(el("pre", "ea-draft-text", email.replyDraft));
+      const copy = el("button", "ea-button", "Copy draft");
+      copy.addEventListener("click", async () => {
+        await navigator.clipboard.writeText(email.replyDraft);
+        copy.textContent = "Copied ✓";
+        setTimeout(() => (copy.textContent = "Copy draft"), 1500);
+      });
+      box.appendChild(copy);
+      sec.appendChild(box);
       body.appendChild(sec);
     } else if (email.isNoReply) {
       body.appendChild(el("div", "ea-empty", "No reply needed — automated sender."));
-    } else if (email.readStatus === "unread") {
-      // The user is literally reading it, so Gmail has flipped it to read —
-      // pick that up now instead of waiting for the next bulk refresh.
-      body.appendChild(el("div", "ea-empty", "Generating reply outline…"));
-      generateOutlineNow(email.emailId);
+    } else {
+      // Drafts are prepared on arrival, not on open (drafting/outline.py's
+      // is_eligible is read-status-blind) — this only fires for mail the
+      // backend genuinely hasn't reached yet, which one live refresh fixes.
+      body.appendChild(el("div", "ea-empty", "Preparing your reply…"));
+      prepareReplyNow(email.emailId);
     }
   }
 
@@ -378,10 +385,10 @@
     }
   }
 
-  const readFlipAttempted = new Set();
-  async function generateOutlineNow(emailId) {
-    if (readFlipAttempted.has(emailId)) return;
-    readFlipAttempted.add(emailId);
+  const liveRefreshAttempted = new Set();
+  async function prepareReplyNow(emailId) {
+    if (liveRefreshAttempted.has(emailId)) return;
+    liveRefreshAttempted.add(emailId);
     const result = await EmailAgent.refreshEmail(emailId);
     if (emailId !== currentEmailId) return;
     if (result?.ok) {
@@ -389,32 +396,6 @@
     } else {
       showMessage("Couldn't refresh this email — check the backend logs.");
     }
-  }
-
-  async function expand(emailId, button, sec) {
-    button.disabled = true;
-    button.textContent = "Expanding…";
-    const result = await EmailAgent.expandDraft(emailId);
-    button.textContent = "Expand to full draft";
-    button.disabled = false;
-
-    sec.querySelector(".ea-draft")?.remove();
-    const box = el("div", "ea-draft");
-    if (result?.ok) {
-      box.appendChild(el("pre", "ea-draft-text", result.data.draft));
-      const copy = el("button", "ea-button", "Copy draft");
-      copy.addEventListener("click", async () => {
-        await navigator.clipboard.writeText(result.data.draft);
-        copy.textContent = "Copied ✓";
-        setTimeout(() => (copy.textContent = "Copy draft"), 1500);
-      });
-      box.appendChild(copy);
-    } else {
-      box.appendChild(
-        el("div", "ea-empty", result?.data?.detail || "Draft expansion failed — is the backend running?")
-      );
-    }
-    sec.appendChild(box);
   }
 
   // --- Inbox tab: the agent-sorted list ---------------------------------------
