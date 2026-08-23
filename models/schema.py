@@ -147,6 +147,9 @@ class ProcessedEmail:
 
     # Track B — summarization (summarization/summarize.py)
     summary: Optional[str] = None
+    # Dates/deadlines exactly as stated in the email (no parsing/inference) —
+    # None until summarized, [] once summarized if none were mentioned.
+    mentioned_dates: Optional[list[str]] = None
 
     # Track B — topic categorization (classification/categorize.py).
     # A short free-form lowercase topic (1-3 words, e.g. "job application",
@@ -170,6 +173,14 @@ class ProcessedEmail:
     # Pipeline bookkeeping (pipeline/orchestrate.py) — set each time this
     # record is (re)processed; supports incremental re-run and debugging.
     processed_at: Optional[datetime] = None
+
+    # Set once chunk -> embed -> extract (Pipeline.process_context_one) has
+    # completed for this email. Read by pipeline/incremental.py to decide
+    # whether the context pass is still due — the three stages don't write
+    # to any ProcessedEmail field (they write chunk/chunk_vec/mention rows
+    # instead), so this is their one completion marker, deliberately not
+    # tied to processed_at: a read-status flip must never invalidate it.
+    context_processed_at: Optional[datetime] = None
 
 
 # ---------------------------------------------------------------------------

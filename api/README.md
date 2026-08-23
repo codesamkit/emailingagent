@@ -53,7 +53,14 @@ processed so far, including nothing.
 | `GET` | `/api/emails` | The review list — filtered, sorted, paginated |
 | `GET` | `/api/emails/{id}` | One email in full, including calendar context |
 | `PATCH` | `/api/emails/{id}/outline` | Save a user-edited outline |
+| `POST` | `/api/emails/{id}/feedback` | Correct a level or no-reply call; applies to every stored email from that sender, immediately |
 | `POST` | `/api/emails/{id}/expand` | Expand to full draft — **501 until implemented** |
+| `POST` | `/api/emails/{id}/calendar-event/approve` | Create the pipeline-proposed event on Google Calendar (**409** if there's no pending proposal) |
+| `POST` | `/api/emails/{id}/calendar-event/decline` | Discard the proposed event — no Calendar API call |
+| `POST` | `/api/emails/{id}/calendar-event/update` | Rename/reschedule an already-approved event (**409** if none is approved) |
+| `POST` | `/api/emails/{id}/calendar-event/cancel` | Delete an approved event and mark it declined (**409** if none is approved) |
+| `POST` | `/api/emails/{id}/refresh` | Re-fetch and re-process just this one message |
+| `POST` | `/api/refresh` | Ingest new mail and process whatever changed (**409** if already running) |
 
 ### `GET /api/emails` parameters
 
@@ -87,7 +94,50 @@ processed so far, including nothing.
 - `importanceScore` is `null` until scored, and those emails always sort
   **last**, in either direction.
 
+## Auth
+
+Local dev needs nothing — `API_TOKEN` is unset, so `api/auth.py`'s gate is a
+no-op, exactly as before this existed. Once the API is deployed somewhere
+network-reachable, set `API_TOKEN` on the server and every `/api/*` route
+requires `Authorization: Bearer <API_TOKEN>` — everything 401s without it.
+`/` (the page shell) never requires it, so the static page can load and
+prompt for the token itself; the Valence UI stores it in `localStorage`
+after the first 401 and attaches it to every subsequent call
+(`api/static/index.html`'s `apiFetch`). The Chrome extension doesn't
+currently send this header at all (see `extension/background.js`), so it
+only works against a local, unauthenticated backend today.
+
+`EXTRA_ORIGINS` (comma-separated) adds allowed CORS origins beyond the
+`localhost` dev ports — set it to the deployed Valence origin if the web UI
+is served from a different domain than the API. The Chrome extension itself
+doesn't need a CORS entry; its background service worker fetches via
+`host_permissions`, not page-context CORS — only the bearer token would
+apply to it if it sent one.
+
+## Calendar writes
+
+`calendaring/propose.py` extracts a candidate meeting from a scheduling email
+during pipeline processing — stored as `proposedEvent`/`proposedEventStatus`
+on the row, never written to Calendar on its own. The four
+`/calendar-event/*` routes are the only things that ever call
+`calendaring/events.py`'s Calendar API functions, each reached only by an
+explicit human action (a button in the Chrome extension, or a direct API
+request):
+
+- **`approve`** calls `create_event` — success sets `proposedEvent.googleEventId`
+  and status `approved`; failure sets `proposedEvent.error` and status
+  `failed` (retryable by calling `approve` again).
+- **`decline`** never touches the Calendar API — just records the decision.
+- **`update`**/**`cancel`** are only valid once `approved`; `update` calls
+  `update_event` (rename via `summary`, reschedule via `start`/`end`), and
+  `cancel` calls `delete_event` then re-marks the row `declined` — the same
+  terminal state `decline` leaves an unapproved proposal in, so the pipeline
+  never re-proposes for this email again either way.
+
+Google 403s on any of these almost always mean the stored token predates the
+write scope — see `calendaring/README.md`'s `auth` command.
+
 ## Not here, on purpose
 
-No send-email endpoint. No create-calendar-event endpoint. Both remain out of
-the product until explicitly built and gated behind a user action.
+No send-email endpoint. That remains out of the product until explicitly
+built and gated behind a user action, the same way calendar writes now are.

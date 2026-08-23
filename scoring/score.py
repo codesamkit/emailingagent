@@ -20,7 +20,7 @@ import json
 from typing import Any, Optional
 
 from models.schema import ImportanceLevel, RawEmail
-from scoring.signals import compute_signals, format_signals_for_prompt
+from scoring.signals import DEFAULT_VIP_SENDERS, compute_signals, format_signals_for_prompt
 
 def _default_model() -> str:
     from llm.client import model_for
@@ -201,10 +201,25 @@ def score_importance(
     email: RawEmail,
     is_no_reply: bool,
     client: Optional[Any] = None,
+    account_owner: Optional[str] = None,
+    vip_senders: Optional[frozenset[str]] = None,
 ) -> tuple[float, ImportanceLevel, str]:
-    """Returns (importance_score 0-100, importance_level, justification)."""
+    """Returns (importance_score 0-100, importance_level, justification).
 
-    signals = compute_signals(email, is_no_reply)
+    `account_owner`/`vip_senders` default to None/empty — this function
+    stays DB- and auth-free unless a caller supplies real values (see
+    scoring/signals.py's resolve_account_owner()/compute_vip_senders(), the
+    PHASES-COMPLEX.md B6 fix — deliberately not resolved here, so every
+    existing call site's behavior is unchanged until something wires them
+    in once per pipeline run).
+    """
+
+    signals = compute_signals(
+        email,
+        is_no_reply,
+        vip_senders=vip_senders if vip_senders is not None else DEFAULT_VIP_SENDERS,
+        account_owner=account_owner,
+    )
 
     if client is None:
         client = _get_default_client()

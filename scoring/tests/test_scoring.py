@@ -50,20 +50,37 @@ class TestComputeSignals(unittest.TestCase):
 
     def test_direct_when_owner_in_to(self):
         email = make_email(headers={"To": "iamsamkitshah@gmail.com"})
-        signals = compute_signals(email, is_no_reply=False)
+        signals = compute_signals(
+            email, is_no_reply=False, account_owner="iamsamkitshah@gmail.com"
+        )
         self.assertTrue(signals["is_direct"])
 
     def test_direct_when_to_header_missing(self):
         email = make_email(headers={})
-        signals = compute_signals(email, is_no_reply=False)
+        signals = compute_signals(
+            email, is_no_reply=False, account_owner="iamsamkitshah@gmail.com"
+        )
         self.assertTrue(signals["is_direct"])
 
     def test_not_direct_when_owner_only_in_cc(self):
         email = make_email(
             headers={"To": "someone.else@company.com", "Cc": "iamsamkitshah@gmail.com"}
         )
-        signals = compute_signals(email, is_no_reply=False)
+        signals = compute_signals(
+            email, is_no_reply=False, account_owner="iamsamkitshah@gmail.com"
+        )
         self.assertFalse(signals["is_direct"])
+
+    def test_direct_defaults_to_permissive_when_owner_unresolved(self):
+        """PHASES-COMPLEX.md B6: an unresolved account_owner (the default)
+        must not silently downrank everything, same as a missing To:
+        header — this is what fixed the is_direct-computed-against-a-stale-
+        address bug without introducing a new wrong-guess failure mode."""
+        email = make_email(
+            headers={"To": "someone.else@company.com", "Cc": "iamsamkitshah@gmail.com"}
+        )
+        signals = compute_signals(email, is_no_reply=False)
+        self.assertTrue(signals["is_direct"])
 
     def test_urgency_keywords_found(self):
         email = make_email(subject="URGENT: action required")

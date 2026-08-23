@@ -6,7 +6,7 @@ google-auth-httplib2>=0.1.1
 # Classification / scoring / summarization / drafting (Tracks B and C)
 anthropic>=0.125.0
 
-# Context graph + retrieval
+# Context graph + retrieval (Tracks A and B)
 # numpy carries the vector channel: this interpreter's sqlite3 has no
 # enable_load_extension, so sqlite-vec/sqlite-vss cannot load and similarity is
 # a dot product over one contiguous float32 matrix instead.

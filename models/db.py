@@ -70,6 +70,7 @@ CREATE TABLE IF NOT EXISTS processed_email (
     importance_justification TEXT,
 
     summary                  TEXT,
+    mentioned_dates          TEXT,          -- JSON array of date strings, verbatim
 
     category                 TEXT,
 
@@ -82,7 +83,8 @@ CREATE TABLE IF NOT EXISTS processed_email (
     reply_outline            TEXT,          -- JSON array of bullet strings
     reply_outline_status     TEXT NOT NULL DEFAULT 'none',
 
-    processed_at             TEXT
+    processed_at             TEXT,
+    context_processed_at     TEXT
 );
 CREATE INDEX IF NOT EXISTS ix_processed_importance ON processed_email (importance_score DESC);
 CREATE INDEX IF NOT EXISTS ix_processed_received_at ON processed_email (received_at DESC);
@@ -294,6 +296,14 @@ MIGRATIONS: Dict[str, Sequence[Tuple[str, str]]] = {
             "proposed_event_status",
             "ALTER TABLE processed_email ADD COLUMN proposed_event_status "
             "TEXT NOT NULL DEFAULT 'none'",
+        ),
+        (
+            "mentioned_dates",
+            "ALTER TABLE processed_email ADD COLUMN mentioned_dates TEXT",
+        ),
+        (
+            "context_processed_at",
+            "ALTER TABLE processed_email ADD COLUMN context_processed_at TEXT",
         ),
     ),
 }

@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-import pytest
-
 from models.schema import (
     CalendarContext,
     CalendarSlot,
@@ -18,7 +16,7 @@ from models.schema import (
     ReplyOutlineStatus,
 )
 from pipeline import persist
-from pipeline.orchestrate import STAGES, Pipeline, to_processed
+from pipeline.orchestrate import Pipeline, to_processed
 
 UTC = timezone.utc
 NOW = datetime(2026, 8, 24, 12, tzinfo=UTC)
@@ -36,7 +34,7 @@ def full_pipeline(**overrides) -> Pipeline:
     defaults = dict(
         classify=lambda e: (False, "personal sender"),
         score=lambda e, nr: (72.5, ImportanceLevel.HIGH, "direct ask"),
-        summarize=lambda e: "Dana needs the Q3 figures.",
+        summarize=lambda e: ("Dana needs the Q3 figures.", ["Friday"]),
         categorize=lambda e: "team planning",
         scheduling_gate=lambda e: False,
         calendar_context=lambda s, t: CalendarContext(range_start=s, range_end=t),
@@ -54,6 +52,7 @@ class TestHappyPath:
         assert result.importance_score == 72.5
         assert result.importance_level == ImportanceLevel.HIGH
         assert result.summary == "Dana needs the Q3 figures."
+        assert result.mentioned_dates == ["Friday"]
         assert result.category == "team planning"
         assert result.is_scheduling_related is False
         assert result.reply_outline == ["Confirm the figures"]
@@ -216,7 +215,7 @@ class TestGracefulDegradation:
         def flaky(email):
             if email.email_id == "b":
                 raise RuntimeError("boom")
-            return "ok"
+            return ("ok", [])
 
         results = full_pipeline(summarize=flaky).process(
             [raw("a"), raw("b"), raw("c")], now=NOW)
@@ -248,7 +247,7 @@ class TestPartialStages:
         called = []
         pipeline = full_pipeline(
             classify=lambda e: called.append("classify") or (False, "x"),
-            summarize=lambda e: called.append("summarize") or "s",
+            summarize=lambda e: called.append("summarize") or ("s", []),
             stages=("summarize",),
         )
         pipeline.process_one(raw(), now=NOW)
@@ -297,6 +296,7 @@ class TestPersistenceRoundTrip:
         assert back.importance_score == result.importance_score
         assert back.importance_level == ImportanceLevel.HIGH
         assert back.summary == result.summary
+        assert back.mentioned_dates == ["Friday"]
         assert back.category == "team planning"
         assert back.reply_outline == ["Confirm the figures"]
         assert back.reply_outline_status == ReplyOutlineStatus.SUGGESTED
@@ -318,13 +318,14 @@ class TestPersistenceRoundTrip:
         assert back.is_scheduling_related is None
         assert back.importance_score is None
         assert back.summary is None
+        assert back.mentioned_dates is None
         assert back.category is None
 
     def test_upsert_refreshes_rather_than_duplicating(self, tmp_path):
         db_path = tmp_path / "t.db"
         first = full_pipeline().process_one(raw(), now=NOW)
         persist.upsert([first], db_path)
-        second = full_pipeline(summarize=lambda e: "updated").process_one(raw(), now=NOW)
+        second = full_pipeline(summarize=lambda e: ("updated", [])).process_one(raw(), now=NOW)
         persist.upsert([second], db_path)
         assert persist.count(db_path) == 1
         assert persist.get("e1", db_path).summary == "updated"
@@ -393,3 +394,4 @@ class TestPersistenceRoundTrip:
         assert not persist.update_proposed_event_status(
             "nope", ProposedEventStatus.DECLINED, db_path=tmp_path / "t.db"
         )
+

@@ -8,16 +8,22 @@ score, they just describe the email so the LLM can weigh them.
 
 from __future__ import annotations
 
+import sqlite3
 from datetime import datetime, timezone
 from typing import Any, Optional
 
+from models import db
 from models.schema import ReadStatus, RawEmail
 
-# Account owner — matches CONTEXT.md's locked-in "Account" decision. No
-# contacts/VIP system exists yet in this repo; DEFAULT_VIP_SENDERS is an
-# empty placeholder a future phase can populate, and compute_signals accepts
-# an override so callers/tests don't need to monkeypatch this constant.
-ACCOUNT_OWNER = "iamsamkitshah@gmail.com"
+# No contacts/VIP system exists yet in this repo; DEFAULT_VIP_SENDERS is an
+# empty placeholder, and compute_signals accepts an override so
+# callers/tests don't need to monkeypatch anything. See compute_vip_senders()
+# below for the real (graph-frequency-based) way to populate one, and
+# resolve_account_owner() for the real (auth-derived) account owner — both
+# are opt-in: compute_signals stays pure/DB-free unless a caller passes them,
+# so no existing call site's behavior changes by default (PHASES-COMPLEX.md
+# B6 — see the fix note on resolve_account_owner/compute_vip_senders for why
+# this is contained rather than wired to run automatically yet).
 DEFAULT_VIP_SENDERS: frozenset[str] = frozenset()
 
 URGENCY_KEYWORDS = (
@@ -47,19 +53,22 @@ def _header(headers: dict[str, str], name: str) -> Optional[str]:
     return None
 
 
-def _is_direct(headers: dict[str, str]) -> bool:
-    """True when the account owner is in To (or To/headers are missing
-    entirely, so an ingestion gap doesn't silently downrank everything).
-    False only when the owner shows up solely in Cc."""
+def _is_direct(headers: dict[str, str], account_owner: Optional[str] = None) -> bool:
+    """True when the account owner is in To (or To/headers are missing, or
+    the owner itself is unresolved, so an ingestion gap or an unresolved
+    owner doesn't silently downrank everything). False only when the owner
+    shows up solely in Cc."""
+    if account_owner is None:
+        return True
     to_header = _header(headers, "To")
     if to_header is None:
         return True
     to_addrs = {_addr_only(a) for a in to_header.split(",") if a.strip()}
-    if ACCOUNT_OWNER in to_addrs:
+    if account_owner in to_addrs:
         return True
     cc_header = _header(headers, "Cc")
     cc_addrs = {_addr_only(a) for a in (cc_header or "").split(",") if a.strip()}
-    if ACCOUNT_OWNER in cc_addrs:
+    if account_owner in cc_addrs:
         return False
     return True
 
@@ -85,9 +94,15 @@ def compute_signals(
     is_no_reply: bool,
     vip_senders: frozenset[str] = DEFAULT_VIP_SENDERS,
     now: Optional[datetime] = None,
+    account_owner: Optional[str] = None,
 ) -> dict[str, Any]:
     """Returns a plain dict of rule-based signals for score.py to pass to
-    the LLM as context."""
+    the LLM as context.
+
+    `account_owner` defaults to None (permissive is_direct, same as an
+    ingestion gap) rather than a hardcoded address — see
+    resolve_account_owner() for the real, opt-in way to supply one.
+    """
 
     # Timezone-aware throughout. Ingestion derives received_at from Gmail's
     # internalDate, which is an absolute UTC instant, so an aware value is what
@@ -102,13 +117,78 @@ def compute_signals(
 
     return {
         "is_vip": sender_addr in vip_senders,
-        "is_direct": _is_direct(headers),
+        "is_direct": _is_direct(headers, account_owner),
         "urgency_keyword_hits": _urgency_hits(email.subject, email.body),
         "hours_since_received": round(hours_since_received, 1),
         "is_unread": is_unread,
         "unread_age_hours": round(hours_since_received, 1) if is_unread else None,
         "is_no_reply": is_no_reply,
     }
+
+
+# --- B6: real (not hardcoded) owner identity and VIP detection -------------
+# Both are opt-in — compute_signals only uses them when a caller passes
+# them in — so no existing call site changes behavior by default. Wiring
+# these to run automatically per pipeline run is a separate, deliberately
+# deferred follow-up (see the module docstring above).
+
+_account_owner_cache: dict[str, Optional[str]] = {}
+
+
+def resolve_account_owner(*, use_cache: bool = True) -> Optional[str]:
+    """The authenticated Gmail profile's address (ingestion/gmail_auth.py),
+    cached for the process so this never hits the API per email. Returns
+    None — not a guess, and not the old hardcoded constant — on ANY
+    failure: missing/expired credentials, no network, or a test/CI
+    environment with no Gmail auth configured. compute_signals treats None
+    exactly like a missing To: header: permissive, not a downrank."""
+    if use_cache and "owner" in _account_owner_cache:
+        return _account_owner_cache["owner"]
+    try:
+        from ingestion.gmail_auth import get_gmail_service, get_profile
+
+        service = get_gmail_service(allow_interactive=False)
+        owner = get_profile(service).get("emailAddress")
+    except Exception:
+        owner = None
+    if use_cache:
+        _account_owner_cache["owner"] = owner
+    return owner
+
+
+def compute_vip_senders(
+    db_path=None, *, percentile: float = 90.0
+) -> frozenset[str]:
+    """PERSON entities (models/db.py's entity table) whose email-exchange
+    frequency — distinct emails they're associated with, via the mention
+    table — is at or above the given percentile. A frequency proxy, not
+    literal two-way (sent+received) volume: this repo ingests inbox mail
+    only, with no sent-folder data, so true two-way volume isn't available;
+    mention frequency across inbox mail is the closest real signal.
+
+    Returns frozenset() — same as the empty DEFAULT_VIP_SENDERS above — when
+    the context graph has no data yet (e.g. Person A's track not merged, or
+    a fresh install) or the query fails for any DB-shaped reason, rather
+    than raising and taking scoring down with it.
+    """
+    try:
+        with db.connect(db_path) as conn:
+            rows = conn.execute(
+                "SELECT e.normalized_key AS addr, COUNT(DISTINCT m.email_id) AS n "
+                "FROM entity e JOIN mention m ON m.entity_id = e.entity_id "
+                "WHERE e.kind = 'person' "
+                "GROUP BY e.entity_id"
+            ).fetchall()
+    except sqlite3.Error:
+        return frozenset()
+
+    if not rows:
+        return frozenset()
+
+    counts = sorted(row["n"] for row in rows)
+    index = min(len(counts) - 1, int(round(percentile / 100.0 * (len(counts) - 1))))
+    threshold = counts[index]
+    return frozenset(row["addr"] for row in rows if row["n"] >= threshold)
 
 
 def format_signals_for_prompt(signals: dict[str, Any]) -> str:

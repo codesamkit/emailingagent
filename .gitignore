@@ -1,3 +1,7 @@
+# Node
+node_modules/
+dist/
+
 # Python
 __pycache__/
 *.py[cod]
@@ -18,3 +22,7 @@ token_gmail.json
 
 # Local SQLite storage
 ingestion/data/
+
+
+# macOS
+.DS_Store

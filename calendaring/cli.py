@@ -6,10 +6,14 @@
     python -m calendaring.cli slots --duration 30      # proposed open slots
     python -m calendaring.cli demo                     # fake email -> context + slots
     python -m calendaring.cli demo --offline           # ...with no network or consent
+    python -m calendaring.cli create --summary "Test" --start 2026-08-25T14:00:00 --end 2026-08-25T14:30:00
+    python -m calendaring.cli update EVENT_ID --summary "Renamed"
+    python -m calendaring.cli cancel EVENT_ID
 
 `--offline` swaps in the canned free/busy data from `calendaring/samples.py`,
-so every command except `auth` can be exercised before Google Cloud setup is
-finished.
+so every read-only command can be exercised before Google Cloud setup is
+finished. `create`/`update`/`cancel` write to your real calendar and have no
+offline mode — a write has to prove itself against the real API.
 """
 
 from __future__ import annotations
@@ -28,14 +32,17 @@ from typing import List, Optional, Sequence
 warnings.filterwarnings("ignore", category=FutureWarning, module=r"google.*")
 warnings.filterwarnings("ignore", message=r".*OpenSSL.*")
 
-from models.schema import CalendarContext, CalendarSlot, RawEmail
+from datetime import datetime
+
+from models.schema import CalendarContext, CalendarSlot, ProposedEvent, RawEmail
 
 from . import config, samples
 from .calendar_auth import MissingCredentialsError, get_calendar_service
 from .context import get_calendar_context, get_calendar_timezone
+from .events import create_event, delete_event, update_event
 from .scheduling_intent import scheduling_signals
 from .suggest import suggest_available_slots
-from .timeutils import default_range, get_timezone
+from .timeutils import default_range, ensure_aware, get_timezone
 
 
 # --- helpers ---------------------------------------------------------------
@@ -49,6 +56,45 @@ def _hours(value: str):
     if not 0 <= parsed[0] < parsed[1] <= 24:
         raise argparse.ArgumentTypeError("working hours must satisfy 0 <= start < end <= 24")
     return parsed
+
+
+def _parse_dt(value: str) -> datetime:
+    try:
+        return ensure_aware(datetime.fromisoformat(value))
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            "expected an ISO 8601 datetime like 2026-08-25T14:00:00, got {0!r}".format(value)
+        )
+
+
+def _print_created_event(event: ProposedEvent, tz) -> None:
+    """`create_event` never raises — a failure lands here with `error` set."""
+    if event.error:
+        print("Failed   : {0}".format(event.error))
+        return
+    print("Event id : {0}".format(event.google_event_id))
+    print("Title    : {0}".format(event.title))
+    print("When     : {0}".format(_fmt_slot(CalendarSlot(event.start, event.end), tz)))
+    if event.location:
+        print("Location : {0}".format(event.location))
+    if event.attendees:
+        print("Attendees: {0}".format(", ".join(event.attendees)))
+
+
+def _print_raw_event(raw: dict) -> None:
+    """`update_event` returns the Calendar API's own JSON shape, not the
+    normalized ProposedEvent — different enough from _print_created_event's
+    input that reusing it would just be confusing."""
+    print("Event id : {0}".format(raw.get("id")))
+    print("Summary  : {0}".format(raw.get("summary")))
+    start = (raw.get("start") or {}).get("dateTime")
+    end = (raw.get("end") or {}).get("dateTime")
+    if start or end:
+        print("When     : {0} -> {1}".format(start, end))
+    if raw.get("location"):
+        print("Location : {0}".format(raw["location"]))
+    if raw.get("htmlLink"):
+        print("Link     : {0}".format(raw["htmlLink"]))
 
 
 def _truncate(text: str, width: int) -> str:
@@ -146,8 +192,8 @@ def cmd_auth(args: argparse.Namespace) -> int:
     print("Timezone      : {0}".format(meta.get("timeZone", "?")))
     print("Token stored  : {0}".format(config.TOKEN_FILE))
     print("Scopes        : {0}".format("\n                ".join(config.SCOPES)))
-    print("\nNote: the write scope is requested now to avoid a second consent")
-    print("later. No code path in this package creates or edits events.")
+    print("\nNote: this token also grants the write scope (calendar.events).")
+    print("`create`/`update`/`cancel` will write to this calendar for real.")
     return 0
 
 
@@ -262,13 +308,62 @@ def cmd_demo(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_create(args: argparse.Namespace) -> int:
+    """Create a real event — no --offline for writes; this proves the
+    plumbing against your actual calendar."""
+    missing = [name for name in ("summary", "start", "end") if getattr(args, name) is None]
+    if missing:
+        print("create requires --{0}".format(", --".join(missing)), file=sys.stderr)
+        return 2
+    service = get_calendar_service(allow_interactive=not args.non_interactive)
+    proposed = ProposedEvent(
+        title=args.summary,
+        start=args.start,
+        end=args.end,
+        attendees=args.attendee or [],
+        location=args.location,
+        description=args.description,
+    )
+    event = create_event(proposed, calendar_id=args.calendar_id, service=service)
+    tz = get_timezone(get_calendar_timezone(service, args.calendar_id))
+    _print_created_event(event, tz)
+    return 0 if event.error is None else 1
+
+
+def cmd_update(args: argparse.Namespace) -> int:
+    """Rename/reschedule/edit an existing event. Only the flags you pass change."""
+    service = get_calendar_service(allow_interactive=not args.non_interactive)
+    event = update_event(
+        args.event_id,
+        summary=args.summary,
+        start=args.start,
+        end=args.end,
+        description=args.description,
+        location=args.location,
+        attendees=args.attendee,
+        calendar_id=args.calendar_id,
+        service=service,
+    )
+    _print_raw_event(event)
+    return 0
+
+
+def cmd_cancel(args: argparse.Namespace) -> int:
+    """Cancel (delete) an event. Idempotent — canceling twice is not an error."""
+    service = get_calendar_service(allow_interactive=not args.non_interactive)
+    delete_event(args.event_id, calendar_id=args.calendar_id, service=service)
+    print("Cancelled {0} on calendar {1}.".format(args.event_id, args.calendar_id))
+    return 0
+
+
 # --- entry point -----------------------------------------------------------
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m calendaring.cli",
-        description="Google Calendar context + slot suggestion (Track A, Phase 1B). "
-                    "Reads free/busy and events; never creates or edits anything.",
+        description="Google Calendar context, slot suggestion, and event writes "
+                    "(Track A, Phase 1B + calendar writes). Read commands never "
+                    "touch your calendar; create/update/cancel do.",
     )
     # Shared flags live on a parent parser so they can be typed *after* the
     # subcommand (`... slots --offline`), which is what people actually expect.
@@ -317,6 +412,33 @@ def build_parser() -> argparse.ArgumentParser:
                             help="fake scheduling email -> context + suggested slots")
     p_demo.add_argument("--id", help="sample id (default: sched-1)")
     p_demo.set_defaults(func=cmd_demo)
+
+    event_common = argparse.ArgumentParser(add_help=False)
+    event_common.add_argument("--summary", help="event title")
+    event_common.add_argument("--start", type=_parse_dt, help="ISO datetime, e.g. 2026-08-25T14:00:00")
+    event_common.add_argument("--end", type=_parse_dt, help="ISO datetime, e.g. 2026-08-25T14:30:00")
+    event_common.add_argument("--description", help="event description")
+    event_common.add_argument("--location", help="event location")
+    event_common.add_argument("--attendee", action="append", metavar="EMAIL",
+                              help="attendee email; repeat for more than one")
+    event_common.add_argument("--calendar-id", default="primary",
+                              help="calendar to write to (default: primary)")
+
+    p_create = sub.add_parser("create", parents=[common, event_common],
+                              help="create a real calendar event")
+    p_create.set_defaults(func=cmd_create)
+
+    p_update = sub.add_parser("update", parents=[common, event_common],
+                              help="rename/reschedule/edit an existing event")
+    p_update.add_argument("event_id")
+    p_update.set_defaults(func=cmd_update)
+
+    p_cancel = sub.add_parser("cancel", parents=[common],
+                              help="cancel (delete) an event")
+    p_cancel.add_argument("event_id")
+    p_cancel.add_argument("--calendar-id", default="primary",
+                          help="calendar the event is on (default: primary)")
+    p_cancel.set_defaults(func=cmd_cancel)
 
     return parser
 

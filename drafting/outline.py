@@ -16,6 +16,7 @@ import logging
 from typing import Any, List, Optional, Tuple
 
 from models.schema import (
+    ContextPack,
     ProcessedEmail,
     RawEmail,
     ReadStatus,
@@ -47,7 +48,10 @@ SYSTEM_PROMPT = (
     "email itself raises that point. Never "
     "invent facts, commitments, prices, or dates that are not in the email. "
     "If the email proposes or asks about meeting times, do NOT guess at "
-    "availability — the caller appends real calendar data separately."
+    "availability — the caller appends real calendar data separately. "
+    "When a 'What you already know:' section is present, draw on it to make "
+    "bullets concrete and specific — but never invent facts, commitments, "
+    "prices, or dates that are absent from BOTH the email and that context."
 )
 
 RESPONSE_SCHEMA = {
@@ -93,10 +97,18 @@ def is_eligible(processed: ProcessedEmail) -> Tuple[bool, ReplyOutlineStatus]:
     return True, ReplyOutlineStatus.SUGGESTED
 
 
-def _build_user_message(processed: ProcessedEmail, raw: RawEmail) -> str:
+def _build_user_message(
+    processed: ProcessedEmail, raw: RawEmail, context: Optional[ContextPack] = None
+) -> str:
     from llm.prompting import email_identity_block
 
     parts = [email_identity_block(raw.sender, raw.recipients, raw.subject)]
+    if context is not None:
+        from retrieval.pack import format_context_for_prompt
+
+        context_text = format_context_for_prompt(context)
+        if context_text:
+            parts.append(context_text)
     if processed.summary:
         parts.append("Summary: {0}".format(processed.summary))
     if processed.is_scheduling_related:
@@ -125,6 +137,7 @@ def generate_reply_outline(
     client: Optional[Any] = None,
     duration_minutes: Optional[int] = None,
     tz=None,
+    context: Optional[ContextPack] = None,
 ) -> Tuple[Optional[List[str]], ReplyOutlineStatus]:
     """Generate reply-outline bullets for an eligible email.
 
@@ -135,6 +148,10 @@ def generate_reply_outline(
 
     The eligibility check happens before `client` is resolved, so an
     ineligible email costs nothing — no API key needed, no network, no tokens.
+
+    `context` is an optional retrieval.pack.build_pack() output
+    (PHASES-COMPLEX.md B5) — omitting it (the default) preserves this
+    function's exact prior behavior.
     """
     eligible, status = is_eligible(processed)
     if not eligible:
@@ -148,7 +165,9 @@ def generate_reply_outline(
         model=_default_model(),
         max_tokens=1024,
         system=SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": _build_user_message(processed, raw)}],
+        messages=[
+            {"role": "user", "content": _build_user_message(processed, raw, context)}
+        ],
         output_config={"format": {"type": "json_schema", "schema": RESPONSE_SCHEMA}},
     )
 

@@ -369,7 +369,26 @@
 
 <script>
 "use strict";
-const api = (path) => fetch(path).then(async (r) => {
+/* ---------- auth: bearer token, only needed once the API is deployed
+   with API_TOKEN set (see api/auth.py) — a no-op against local dev ---------- */
+const API_TOKEN_KEY = "valence-api-token";
+function authHeaders(extra) {
+  const token = localStorage.getItem(API_TOKEN_KEY);
+  return token ? Object.assign({}, extra, { Authorization: "Bearer " + token }) : (extra || {});
+}
+async function apiFetch(path, options = {}) {
+  const opts = Object.assign({}, options, { headers: authHeaders(options.headers) });
+  let r = await fetch(path, opts);
+  if (r.status === 401) {
+    const token = window.prompt("API token required (deployed instance):");
+    if (token) {
+      localStorage.setItem(API_TOKEN_KEY, token);
+      r = await fetch(path, Object.assign({}, options, { headers: authHeaders(options.headers) }));
+    }
+  }
+  return r;
+}
+const api = (path) => apiFetch(path).then(async (r) => {
   if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || (r.status + " " + r.statusText));
   return r.json();
 });
@@ -449,6 +468,11 @@ function tags(email) {
   if (email.category) t.push('<span class="tag topic">' + esc(email.category) + "</span>");
   if (email.isNoReply) t.push('<span class="tag noreply">no-reply</span>');
   if (email.isSchedulingRelated) t.push('<span class="tag sched">scheduling</span>');
+  if (email.mentionedDates && email.mentionedDates.length) {
+    const extra = email.mentionedDates.length > 1 ? " +" + (email.mentionedDates.length - 1) : "";
+    t.push('<span class="tag date" title="' + esc(email.mentionedDates.join(", ")) + '">' +
+           esc(email.mentionedDates[0]) + extra + "</span>");
+  }
   if (email.replyOutline) t.push('<span class="tag outline">outline ' + esc(email.replyOutlineStatus) + "</span>");
   if (email.replyEffort) t.push('<span class="tag effort">' + esc(email.replyEffort) + " reply</span>");
   return t.join("");
@@ -706,7 +730,7 @@ function editOutline(e) {
     const lines = document.getElementById("outlineInput").value.split("\n").map((l) => l.trim()).filter(Boolean);
     const msg = document.getElementById("outlineMsg");
     try {
-      const r = await fetch("/api/emails/" + e.emailId + "/outline", {
+      const r = await apiFetch("/api/emails/" + e.emailId + "/outline", {
         method: "PATCH", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ outline: lines }),
       });
@@ -724,7 +748,7 @@ async function expandDraft(e) {
   const msg = document.getElementById("outlineMsg");
   btn.disabled = true; btn.textContent = "Expanding…";
   try {
-    const r = await fetch("/api/emails/" + e.emailId + "/expand", { method: "POST" });
+    const r = await apiFetch("/api/emails/" + e.emailId + "/expand", { method: "POST" });
     if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
     const body = await r.json();
     const section = document.getElementById("draftSection");

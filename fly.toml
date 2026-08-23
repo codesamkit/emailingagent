@@ -1,0 +1,28 @@
+# Fly.io app config — one persistent volume shared by the API (this app)
+# and the scheduled pipeline machine (deploy/README.md). Swap for a plain
+# VPS + systemd if you'd rather not use Fly; nothing else in the repo
+# depends on Fly specifically.
+app = "valence-email-agent"          # change to your own app name
+primary_region = "iad"               # pick the region nearest you
+
+[build]
+
+[mounts]
+  source = "valence_data"
+  destination = "/data"
+
+[env]
+  EMAIL_AGENT_DB = "/data/emails.db"
+  GMAIL_TOKEN_FILE = "/data/token_gmail.json"
+  CALENDAR_TOKEN_FILE = "/data/calendar_token.json"
+  GMAIL_CREDENTIALS_FILE = "/data/client_secret.json"
+  CALENDAR_CREDENTIALS_FILE = "/data/client_secret.json"
+  # Set as secrets, not here: API_TOKEN, ANTHROPIC_API_KEY (or LLM_PROVIDER).
+  # fly secrets set API_TOKEN=... ANTHROPIC_API_KEY=...
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  auto_stop_machines = false   # a stopped machine can't serve the add-on
+  auto_start_machines = true
+  min_machines_running = 1

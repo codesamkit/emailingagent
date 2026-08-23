@@ -6,25 +6,32 @@ calls; serving is a fast read of rows that job already wrote. Keeping those
 apart means no HTTP request ever waits on the pipeline, and the API needs no
 long timeouts, no job queue, and no background workers to be correct.
 
-The mutating endpoints (edit an outline, expand a draft, approve/decline a
-proposed calendar event) are per-email and human-triggered. Nothing here
-sends email. Creating a calendar event happens only from the approve
-endpoint, in direct response to a human click — never from a batch run.
+Every mutating endpoint (edit an outline, expand a draft, approve/decline a
+proposed calendar event, update/cancel an approved one) is per-email and
+human-triggered — none of them is ever called by the batch pipeline. There
+is still no send-email endpoint; that stays out of the product until it is
+explicitly built and gated the same way.
 """
 
 from __future__ import annotations
 
+import json
 import logging
+import os
+from dataclasses import replace
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import Body, FastAPI, HTTPException, Query
+from fastapi import Body, Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
+from pydantic import BaseModel
 
 from models.schema import ProposedEventStatus, ReplyOutlineStatus
 from pipeline import persist
 
+from .auth import require_token
 from .filters import SORT_FIELDS, apply_filters, sort_emails
 from .serializers import email_to_json, emails_to_json
 
@@ -41,17 +48,21 @@ app = FastAPI(
 
 # The frontend runs on a different port in dev. Origins are an explicit list
 # rather than "*" so that turning this into a deployed app later is a config
-# change, not a security review.
+# change, not a security review. EXTRA_ORIGINS (comma-separated) adds the
+# deployed Valence origin once one exists — the Chrome extension itself
+# doesn't need an entry here either: its background service worker fetches
+# via host_permissions, not page-context CORS (see extension/background.js).
 DEV_ORIGINS = [
     "http://localhost:3000",
     "http://localhost:5173",
     "http://127.0.0.1:3000",
     "http://127.0.0.1:5173",
 ]
+EXTRA_ORIGINS = [o.strip() for o in os.environ.get("EXTRA_ORIGINS", "").split(",") if o.strip()]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=DEV_ORIGINS,
+    allow_origins=DEV_ORIGINS + EXTRA_ORIGINS,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PATCH", "OPTIONS"],
     allow_headers=["*"],
@@ -70,7 +81,7 @@ def index() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
 
 
-@app.get("/api/health")
+@app.get("/api/health", dependencies=[Depends(require_token)])
 def health() -> Dict[str, Any]:
     """Liveness plus enough state to debug an empty-looking UI."""
     try:
@@ -80,7 +91,7 @@ def health() -> Dict[str, Any]:
     return {"status": "ok", "processedEmails": total}
 
 
-@app.get("/api/emails")
+@app.get("/api/emails", dependencies=[Depends(require_token)])
 def list_emails(
     readStatus: Optional[str] = Query(None, pattern="^(read|unread)$"),
     importance: Optional[str] = Query(None, pattern="^(low|medium|high|urgent)$"),
@@ -121,11 +132,54 @@ def list_emails(
     }
 
 
-@app.get("/api/emails/{email_id}")
+def _related_context(email_id: str) -> Dict[str, Any]:
+    """Case/project entities mentioned in this email, and other emails that
+    share those entities — read directly from the context-graph tables
+    (Checkpoint 0's chunk/entity/mention/relation, PHASES-COMPLEX.md).
+
+    This is real wiring against real tables, not a fixture — it just has
+    nothing to return until Track A's extraction pipeline (context/extract.py)
+    actually populates `mention`, since nothing has written to that table yet.
+    Kept here rather than in a context/store.py this track doesn't own.
+    """
+    from models import db as models_db
+
+    with models_db.connect(DB_PATH) as conn:
+        models_db.prepare(conn)
+        entity_rows = conn.execute(
+            "SELECT DISTINCT e.entity_id, e.kind, e.canonical_name "
+            "FROM mention m JOIN entity e ON e.entity_id = m.entity_id "
+            "WHERE m.email_id = ? AND e.kind IN ('case', 'project') "
+            "ORDER BY e.salience DESC LIMIT 10",
+            (email_id,),
+        ).fetchall()
+        entities = [dict(row) for row in entity_rows]
+
+        related_email_ids: List[str] = []
+        if entities:
+            entity_ids = [e["entity_id"] for e in entities]
+            placeholders = ",".join("?" for _ in entity_ids)
+            rows = conn.execute(
+                "SELECT DISTINCT email_id FROM mention "
+                "WHERE entity_id IN ({0}) AND email_id != ? LIMIT 10".format(placeholders),
+                (*entity_ids, email_id),
+            ).fetchall()
+            related_email_ids = [row["email_id"] for row in rows]
+
+    return {
+        "entities": [
+            {"entityId": e["entity_id"], "kind": e["kind"], "name": e["canonical_name"]}
+            for e in entities
+        ],
+        "relatedEmailIds": related_email_ids,
+    }
+
+
+@app.get("/api/emails/{email_id}", dependencies=[Depends(require_token)])
 def get_email(email_id: str) -> Dict[str, Any]:
-    """One email in full: processed fields, calendar context, and the
-    original message text from `raw_email` (null if that row is gone,
-    e.g. a database written before ingestion ran)."""
+    """One email in full: processed fields, calendar context, the original
+    message text from `raw_email` (null if that row is gone, e.g. a database
+    written before ingestion ran), and its context-graph neighborhood."""
     email = persist.get(email_id, DB_PATH)
     if email is None:
         raise HTTPException(status_code=404, detail="No processed email {0!r}".format(email_id))
@@ -135,10 +189,11 @@ def get_email(email_id: str) -> Dict[str, Any]:
 
     raw = raw_store.get(email_id, DB_PATH)
     payload["body"] = raw.body if raw else None
+    payload["relatedContext"] = _related_context(email_id)
     return payload
 
 
-@app.patch("/api/emails/{email_id}/outline")
+@app.patch("/api/emails/{email_id}/outline", dependencies=[Depends(require_token)])
 def edit_outline(
     email_id: str,
     outline: List[str] = Body(..., embed=True),
@@ -171,7 +226,7 @@ def edit_outline(
     return email_to_json(persist.get(email_id, DB_PATH), include_calendar=True)
 
 
-@app.post("/api/emails/{email_id}/feedback")
+@app.post("/api/emails/{email_id}/feedback", dependencies=[Depends(require_token)])
 def give_feedback(
     email_id: str,
     level: Optional[str] = Body(None),
@@ -218,7 +273,7 @@ def give_feedback(
     }
 
 
-@app.post("/api/emails/{email_id}/expand")
+@app.post("/api/emails/{email_id}/expand", dependencies=[Depends(require_token)])
 def expand_draft(email_id: str) -> Dict[str, Any]:
     """Expand an approved outline into full prose.
 
@@ -241,7 +296,7 @@ def expand_draft(email_id: str) -> Dict[str, Any]:
         raise HTTPException(status_code=501, detail=str(exc))
 
 
-@app.post("/api/emails/{email_id}/refresh")
+@app.post("/api/emails/{email_id}/refresh", dependencies=[Depends(require_token)])
 def refresh_email(email_id: str) -> Dict[str, Any]:
     """Re-fetch one message from Gmail and process what it needs.
 
@@ -270,7 +325,7 @@ def refresh_email(email_id: str) -> Dict[str, Any]:
     return get_email(email_id)
 
 
-@app.post("/api/refresh")
+@app.post("/api/refresh", dependencies=[Depends(require_token)])
 def refresh_pipeline(ingestLimit: Optional[int] = Query(None, ge=1, le=500)) -> Dict[str, Any]:
     """Ingest new Gmail messages and process whatever changed.
 
@@ -298,7 +353,7 @@ def refresh_pipeline(ingestLimit: Optional[int] = Query(None, ge=1, le=500)) -> 
 _APPROVABLE_STATUSES = (ProposedEventStatus.SUGGESTED, ProposedEventStatus.FAILED)
 
 
-@app.post("/api/emails/{email_id}/calendar-event/approve")
+@app.post("/api/emails/{email_id}/calendar-event/approve", dependencies=[Depends(require_token)])
 def approve_calendar_event(email_id: str) -> Dict[str, Any]:
     """Create the proposed event on Google Calendar.
 
@@ -334,7 +389,7 @@ def approve_calendar_event(email_id: str) -> Dict[str, Any]:
     return email_to_json(persist.get(email_id, DB_PATH), include_calendar=True)
 
 
-@app.post("/api/emails/{email_id}/calendar-event/decline")
+@app.post("/api/emails/{email_id}/calendar-event/decline", dependencies=[Depends(require_token)])
 def decline_calendar_event(email_id: str) -> Dict[str, Any]:
     """Discard the proposed event. No Calendar API call is ever made.
 
@@ -354,7 +409,205 @@ def decline_calendar_event(email_id: str) -> Dict[str, Any]:
     return email_to_json(persist.get(email_id, DB_PATH), include_calendar=True)
 
 
-@app.get("/api/stats")
+def _calendar_http_error(exc: Any) -> HTTPException:
+    """Map a googleapiclient HttpError for update/cancel, the way
+    `refresh_email` maps Gmail's. 403 here almost always means the stored
+    Calendar token predates the write scope — re-running
+    `python -m calendaring.cli auth` re-consents, so the fix is "try again",
+    not a code change.
+    """
+    status = getattr(getattr(exc, "resp", None), "status", None)
+    if status == 404:
+        return HTTPException(status_code=404, detail="Calendar event not found — it may already be gone.")
+    if status == 403:
+        return HTTPException(
+            status_code=503,
+            detail=(
+                "Calendar write access unavailable ({0}). Run `python -m "
+                "calendaring.cli auth` to grant the write scope, then retry.".format(exc)
+            ),
+        )
+    return HTTPException(status_code=502, detail="Calendar error: {0}".format(exc))
+
+
+class UpdateProposedEventBody(BaseModel):
+    summary: Optional[str] = None
+    start: Optional[datetime] = None
+    end: Optional[datetime] = None
+    description: Optional[str] = None
+    location: Optional[str] = None
+    attendees: Optional[List[str]] = None
+
+
+@app.post("/api/emails/{email_id}/calendar-event/update", dependencies=[Depends(require_token)])
+def update_calendar_event(email_id: str, body: UpdateProposedEventBody) -> Dict[str, Any]:
+    """Rename, reschedule, or otherwise edit an event already on Google
+    Calendar. Only reachable once `approve` has succeeded (status APPROVED)
+    — an event that was never created, or was declined, has nothing to edit.
+
+    A failed edit leaves the stored event and its APPROVED status untouched:
+    see calendaring/events.py's module docstring for why update_event raises
+    instead of returning an error the way create_event does.
+    """
+    email = persist.get(email_id, DB_PATH)
+    if email is None:
+        raise HTTPException(status_code=404, detail="No processed email {0!r}".format(email_id))
+    proposed = email.proposed_event
+    if (
+        email.proposed_event_status != ProposedEventStatus.APPROVED
+        or proposed is None
+        or not proposed.google_event_id
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="This email has no approved calendar event to update.",
+        )
+
+    from googleapiclient.errors import HttpError
+
+    from calendaring.events import update_event
+
+    try:
+        update_event(
+            proposed.google_event_id,
+            summary=body.summary,
+            start=body.start,
+            end=body.end,
+            description=body.description,
+            location=body.location,
+            attendees=body.attendees,
+        )
+    except HttpError as exc:
+        raise _calendar_http_error(exc)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+    # Google's API was told the same values; trust them locally rather than
+    # re-parsing its response, the same way approve() trusts what it sent.
+    updated = replace(
+        proposed,
+        title=body.summary if body.summary is not None else proposed.title,
+        start=body.start if body.start is not None else proposed.start,
+        end=body.end if body.end is not None else proposed.end,
+        location=body.location if body.location is not None else proposed.location,
+        description=body.description if body.description is not None else proposed.description,
+        attendees=body.attendees if body.attendees is not None else proposed.attendees,
+    )
+    persist.update_proposed_event_status(email_id, ProposedEventStatus.APPROVED, updated, DB_PATH)
+    return email_to_json(persist.get(email_id, DB_PATH), include_calendar=True)
+
+
+@app.post("/api/emails/{email_id}/calendar-event/cancel", dependencies=[Depends(require_token)])
+def cancel_calendar_event(email_id: str) -> Dict[str, Any]:
+    """Delete an approved event from Google Calendar and mark the decision
+    DECLINED — the same terminal state `decline` leaves a never-created
+    proposal in, so the pipeline's terminal-status guard
+    (pipeline/orchestrate.py) leaves this row alone on future runs either way.
+    """
+    email = persist.get(email_id, DB_PATH)
+    if email is None:
+        raise HTTPException(status_code=404, detail="No processed email {0!r}".format(email_id))
+    proposed = email.proposed_event
+    if (
+        email.proposed_event_status != ProposedEventStatus.APPROVED
+        or proposed is None
+        or not proposed.google_event_id
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="This email has no approved calendar event to cancel.",
+        )
+
+    from googleapiclient.errors import HttpError
+
+    from calendaring.events import delete_event
+
+    try:
+        delete_event(proposed.google_event_id)
+    except HttpError as exc:
+        raise _calendar_http_error(exc)
+
+    cleared = replace(proposed, google_event_id=None, error=None)
+    persist.update_proposed_event_status(email_id, ProposedEventStatus.DECLINED, cleared, DB_PATH)
+    return email_to_json(persist.get(email_id, DB_PATH), include_calendar=True)
+
+
+class AgentChatBody(BaseModel):
+    message: str
+    conversationId: Optional[str] = None
+
+
+def _agent_event_to_json(event: Any, conversation_id: str) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {"type": event.type}
+    if event.type == "text_delta":
+        payload["text"] = event.text
+    elif event.type == "tool_start":
+        payload["tool"] = event.tool
+        payload["toolInput"] = event.tool_input
+    elif event.type == "tool_end":
+        payload["tool"] = event.tool
+        payload["toolResult"] = event.tool_result
+    elif event.type == "done":
+        payload["conversationId"] = conversation_id
+    return payload
+
+
+@app.post("/api/agent/chat", dependencies=[Depends(require_token)])
+def agent_chat(body: AgentChatBody) -> StreamingResponse:
+    """Chat with the in-app agent over Server-Sent Events.
+
+    Creates a conversation if none is given, appends the user's message,
+    runs agent.loop.run, and streams its events out as they're produced —
+    one JSON object per `data:` line. On the final "done" event, every
+    message the loop generated (assistant turns and interleaved tool-result
+    turns) is persisted via agent.conversation.append, so the next chat call
+    against the same conversationId continues with full history.
+
+    A provider misconfiguration (agent routed to ollama, which has no
+    tool-calling support) surfaces as a `{"type": "error", ...}` event
+    inside the stream rather than an HTTP error status — by the time that
+    failure is known, the 200 response has already started.
+    """
+    from agent import conversation as agent_conversation
+    from agent.loop import OllamaToolsUnsupportedError
+    from agent.loop import run as run_agent
+
+    conversation_id = body.conversationId or agent_conversation.create(db_path=DB_PATH)
+    agent_conversation.append(conversation_id, "user", body.message, DB_PATH)
+    messages = agent_conversation.history(conversation_id, db_path=DB_PATH)
+
+    def event_stream():
+        try:
+            for event in run_agent(messages, db_path=DB_PATH):
+                if event.type == "done":
+                    for new_message in event.new_messages:
+                        agent_conversation.append(
+                            conversation_id, new_message["role"], new_message["content"], DB_PATH
+                        )
+                yield "data: {0}\n\n".format(
+                    json.dumps(_agent_event_to_json(event, conversation_id))
+                )
+        except OllamaToolsUnsupportedError as exc:
+            yield "data: {0}\n\n".format(json.dumps({"type": "error", "error": str(exc)}))
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+@app.get("/api/agent/conversations/{conversation_id}", dependencies=[Depends(require_token)])
+def get_agent_conversation(conversation_id: str) -> Dict[str, Any]:
+    from agent import conversation as agent_conversation
+
+    if agent_conversation.get(conversation_id, db_path=DB_PATH) is None:
+        raise HTTPException(
+            status_code=404, detail="No agent conversation {0!r}".format(conversation_id)
+        )
+    return {
+        "conversationId": conversation_id,
+        "messages": agent_conversation.history(conversation_id, db_path=DB_PATH),
+    }
+
+
+@app.get("/api/stats", dependencies=[Depends(require_token)])
 def stats() -> Dict[str, Any]:
     """Counts the review UI shows above the list."""
     emails = persist.all_processed(DB_PATH)

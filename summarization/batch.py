@@ -43,11 +43,16 @@ RESPONSE_SCHEMA = {
                 "type": "object",
                 "properties": {
                     "email_id": {"type": "string", "maxLength": 100},
-                    # Same 450-char bound as summarize.py's single-call
-                    # schema — the two promise an identical output contract.
+                    # Same bounds as summarize.py's single-call schema — the
+                    # two promise an identical output contract.
                     "summary": {"type": "string", "maxLength": 450},
+                    "dates": {
+                        "type": "array",
+                        "items": {"type": "string", "maxLength": 60},
+                        "maxItems": 5,
+                    },
                 },
-                "required": ["email_id", "summary"],
+                "required": ["email_id", "summary", "dates"],
                 "additionalProperties": False,
             },
         },
@@ -81,10 +86,10 @@ def summarize_batch(
     emails: list[RawEmail],
     client: Optional[Any] = None,
     batch_size: int = BATCH_SIZE,
-) -> dict[str, str]:
-    """Returns {email_id: summary}. Batches underlying LLM calls (up to
-    batch_size emails per call) for volume efficiency; same output contract
-    as calling summarize() on each email individually."""
+) -> dict[str, tuple[str, list[str]]]:
+    """Returns {email_id: (summary, dates)}. Batches underlying LLM calls (up
+    to batch_size emails per call) for volume efficiency; same output
+    contract as calling summarize() on each email individually."""
 
     if not emails:
         return {}
@@ -92,7 +97,7 @@ def summarize_batch(
     if client is None:
         client = _get_default_client()
 
-    results: dict[str, str] = {}
+    results: dict[str, tuple[str, list[str]]] = {}
     for chunk in _chunk(emails, batch_size):
         response = client.messages.create(
             model=_default_model(),
@@ -105,6 +110,6 @@ def summarize_batch(
         text = next(block.text for block in response.content if block.type == "text")
         data = json.loads(text)
         for item in data["summaries"]:
-            results[str(item["email_id"])] = str(item["summary"])
+            results[str(item["email_id"])] = (str(item["summary"]), [str(d) for d in item["dates"]])
 
     return results
