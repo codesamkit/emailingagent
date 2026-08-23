@@ -49,9 +49,9 @@ app = FastAPI(
 # The frontend runs on a different port in dev. Origins are an explicit list
 # rather than "*" so that turning this into a deployed app later is a config
 # change, not a security review. EXTRA_ORIGINS (comma-separated) adds the
-# deployed Valence origin once one exists — the Gmail add-on itself doesn't
-# need an entry here, since Apps Script's UrlFetchApp isn't a browser and
-# isn't subject to CORS.
+# deployed Valence origin once one exists — the Chrome extension itself
+# doesn't need an entry here either: its background service worker fetches
+# via host_permissions, not page-context CORS (see extension/background.js).
 DEV_ORIGINS = [
     "http://localhost:3000",
     "http://localhost:5173",

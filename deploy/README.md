@@ -1,11 +1,12 @@
 # Deploying the API + pipeline
 
-The Gmail add-on (`gmail-addon/`) calls the API over HTTPS from Google's
-servers, so it needs a real host — not `localhost:8000`. Since SQLite is a
-file, not a network service, the batch pipeline that writes to it and the
-API that reads from it have to run on the same host, sharing one disk. This
-uses [Fly.io](https://fly.io) as a concrete example; swap for any host that
-gives you a persistent volume and lets you run a cron job.
+A deployed API is useful if you want it reachable from somewhere other than
+`localhost:8000` — not required for local use with the Chrome extension.
+Since SQLite is a file, not a network service, the batch pipeline that
+writes to it and the API that reads from it have to run on the same host,
+sharing one disk. This uses [Fly.io](https://fly.io) as a concrete example;
+swap for any host that gives you a persistent volume and lets you run a
+cron job.
 
 ## One-time setup
 
@@ -36,10 +37,12 @@ gives you a persistent volume and lets you run a cron job.
    # Local dev can stay on LLM_PROVIDER=ollama; a small cloud host generally
    # can't run Ollama well, so the deployed pipeline wants Anthropic instead.
    ```
-   Save the `API_TOKEN` value — it's what you'll put in the add-on's script
-   property (`gmail-addon/README.md`) and, the first time you load the
-   deployed Valence page in a browser, what you'll paste into its token
-   prompt.
+   Save the `API_TOKEN` value — it's what you'll paste into the deployed
+   Valence page's token prompt the first time you load it in a browser.
+   (The Chrome extension doesn't currently send an Authorization header at
+   all — `extension/background.js`'s fetch proxy assumes a local, trusted
+   backend — so pointing it at a deployed, `API_TOKEN`-protected host isn't
+   supported yet without adding that.)
 
 5. **Deploy the API:**
    ```bash

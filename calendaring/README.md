@@ -15,7 +15,7 @@ without forcing a second consent prompt — and now it has. Every write still
 goes through an explicit, human-triggered call: the `create`/`update`/`cancel`
 CLI commands for manual testing, or `api/main.py`'s
 `/calendar-event/approve|decline|update|cancel` routes, reached only from a
-button tap in the Gmail Add-on/Chrome extension or a direct API request —
+button tap in the Chrome extension or a direct API request —
 never from the batch pipeline. `propose.py` only ever extracts and stores a
 *proposal*; it never calls the Calendar API. That gate is per `CONTEXT.md`'s
 human-in-the-loop rule.
@@ -178,8 +178,8 @@ delete_event(result.google_event_id)
 - None of these three functions is called from the pipeline, a cron job, or
   anywhere else automatic. The only caller is `api/main.py`'s
   `/api/emails/{id}/calendar-event/approve|decline|update|cancel` routes, each
-  reached only by an explicit user action (a button in the Gmail Add-on or
-  Chrome extension, or a direct API request) — see `api/README.md`.
+  reached only by an explicit user action (a button in the Chrome extension,
+  or a direct API request) — see `api/README.md`.
 - For manual testing without any UI, use the `create`/`update`/`cancel` CLI
   commands above — they hit your real calendar, so verify and clean up in
   Google Calendar's own UI afterward.
