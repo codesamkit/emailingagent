@@ -173,3 +173,142 @@ class ProcessedEmail:
     # Pipeline bookkeeping (pipeline/orchestrate.py) — set each time this
     # record is (re)processed; supports incremental re-run and debugging.
     processed_at: Optional[datetime] = None
+
+    # Set once chunk -> embed -> extract (Pipeline.process_context_one) has
+    # completed for this email. Read by pipeline/incremental.py to decide
+    # whether the context pass is still due — the three stages don't write
+    # to any ProcessedEmail field (they write chunk/chunk_vec/mention rows
+    # instead), so this is their one completion marker, deliberately not
+    # tied to processed_at: a read-status flip must never invalidate it.
+    context_processed_at: Optional[datetime] = None
+
+
+# --- Context graph (Checkpoint 0, PHASES-COMPLEX.md) -----------------------
+#
+# An entity-centric graph layered on top of the record above: raw_email is
+# chunked, embedded, and mined for mentions of people/orgs/cases/projects,
+# which resolve to entities and relations, which roll up into per-node
+# briefs. Retrieval (BM25 + vector + graph-walk) and the in-app agent read
+# this graph; nothing here replaces ProcessedEmail, it's built alongside it.
+
+
+class EntityKind(str, Enum):
+    PERSON = "person"
+    ORG = "org"
+    CASE = "case"                       # CRM-shaped: ticket / case / incident
+    PROJECT = "project"
+    DELIVERABLE = "deliverable"
+    DOCUMENT = "document"
+    TOPIC = "topic"
+
+
+class ChunkKind(str, Enum):
+    BODY = "body"
+    QUOTED = "quoted"
+    SIGNATURE = "signature"
+
+
+class MentionSource(str, Enum):
+    HEADER = "header"
+    REGEX = "regex"
+    LLM = "llm"
+
+
+@dataclass
+class Chunk:
+    """One paragraph-sized slice of an email's body (Track A,
+    context/chunk.py). kind=QUOTED/SIGNATURE chunks are stored but excluded
+    from embedding and extraction — see context/chunk.py's quote-stripping
+    contract."""
+
+    chunk_id: str
+    email_id: str
+    ord: int
+    text: str
+    kind: ChunkKind
+
+
+@dataclass
+class Entity:
+    """A resolved person/org/case/project/... node (Track A,
+    context/resolve.py). One row per real-world thing, deduplicated across
+    however many ways it's mentioned across the corpus."""
+
+    entity_id: str
+    kind: EntityKind
+    canonical_name: str
+    normalized_key: str
+    aliases: list[str] = field(default_factory=list)
+    first_seen: Optional[datetime] = None
+    last_seen: Optional[datetime] = None
+    mention_count: int = 0
+    salience: float = 0.0
+
+
+@dataclass
+class Mention:
+    """One occurrence of an entity in one email (Track A,
+    context/extract.py). chunk_id is None for header-derived mentions, which
+    aren't anchored to a specific body chunk."""
+
+    email_id: str
+    entity_id: str
+    span_text: str
+    confidence: float
+    source: MentionSource
+    chunk_id: Optional[str] = None
+
+
+@dataclass
+class Relation:
+    """A directed edge between two entities (Track A,
+    context/consolidate.py), evidenced by one or more emails."""
+
+    src_entity_id: str
+    dst_entity_id: str
+    rel: str                            # belongs_to | participant_in | mentions | owner_of
+    weight: float = 0.0
+    evidence_email_ids: list[str] = field(default_factory=list)
+
+
+@dataclass
+class Brief:
+    """A cached, LLM-written state document for one thread/case/project/
+    person node (Track B, retrieval/briefs.py) — "what's happened, who's
+    involved, what's still open, what was decided," regenerated only when
+    evidence_hash changes."""
+
+    node_type: str                      # thread | case | project | person
+    node_id: str
+    headline: str
+    body_md: str
+    open_items: list[str] = field(default_factory=list)
+    evidence_email_ids: list[str] = field(default_factory=list)
+    evidence_hash: Optional[str] = None
+    generated_at: Optional[datetime] = None
+
+
+@dataclass
+class ContextSection:
+    """One labeled, provenance-carrying slice of assembled context (Track B,
+    retrieval/pack.py). label must read like "From <sender>, <date>, re:
+    <subject>" for any foreign (non-anchor) section — see build_pack's
+    citation contract."""
+
+    label: str
+    text: str
+    source_email_ids: list[str] = field(default_factory=list)
+    score: float = 0.0
+
+
+@dataclass
+class ContextPack:
+    """The one context-assembly output in the codebase (Track B,
+    retrieval/pack.py's build_pack — the only function that produces this).
+    Consumed by drafting/outline.py, summarization/summarize.py, and
+    agent/loop.py; nobody else builds context strings by hand."""
+
+    query: Optional[str] = None
+    anchor_email_id: Optional[str] = None
+    sections: list[ContextSection] = field(default_factory=list)
+    total_chars: int = 0

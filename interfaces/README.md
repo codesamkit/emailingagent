@@ -262,6 +262,178 @@ def expand_outline_to_full_draft(email_id: str) -> str:
 
 ---
 
+## Context graph (Track A) → produces `chunk`/`entity`/`mention`/`relation` rows
+
+> Added at Checkpoint 0 (`PHASES-COMPLEX.md`), append-only: a new layer
+> alongside `ProcessedEmail`, not a replacement for it. Types referenced
+> below (`Chunk`, `Entity`, `Mention`, `Relation`, `EntityKind`, `ChunkKind`)
+> are defined in `models/schema.py`.
+
+```python
+# context/chunk.py
+def chunk_email(
+    raw: RawEmail,
+    *,
+    target_chars: int = 800,
+    overlap: int = 100,
+) -> list[Chunk]:
+    """Strips quoted reply history and signatures BEFORE chunking — load-
+    bearing, not tidiness: unstripped quote blocks make every email in a
+    thread look near-identical, poisoning embeddings and misattributing
+    entities. Stripped text is not discarded — emitted as kind=QUOTED/
+    SIGNATURE chunks so nothing is silently lost, just excluded from
+    embedding/extraction downstream. Remaining kind=BODY text is chunked on
+    paragraph boundaries to ~target_chars with overlap; never splits
+    mid-sentence."""
+
+# context/extract.py
+def extract_entities(
+    raw: RawEmail,
+    chunks: Sequence[Chunk],
+) -> list[Mention]:
+    """Deterministic first, LLM second (this repo's standing philosophy —
+    see classification/rules.py before classification/llm_fallback.py).
+    Pass 1 (free, exact): PERSON/ORG from headers, CASE/DOCUMENT ids by
+    regex — source=HEADER/REGEX, confidence 1.0. Pass 2 (one LLM call,
+    stage "extract"): PROJECT/DELIVERABLE/TOPIC only, plus which pass-1 ids
+    are this email's actual subject vs. an incidental mention — given only
+    kind=BODY chunks, never QUOTED/SIGNATURE. Schema declares `reason`
+    before the answer arrays; maxLength on every string."""
+
+# context/resolve.py
+def resolve(mentions: list[Mention], existing: "EntityIndex") -> "ResolveResult":
+    """Deterministic ladder, first match wins: (1) exact normalized_key
+    within the same EntityKind, (2) entity_alias match, (3) same-kind
+    embedding cosine >= 0.86 against entity_vec, (4) else create a new
+    entity. PERSON entities key on the bare email address, never display
+    name. Pure and unit-testable — no model, no DB; embeddings are passed
+    in, not computed inside, so the 0.86 threshold can be tuned against
+    hand-built vectors in a test."""
+
+# context/store.py
+def upsert_chunks(chunks: list[Chunk], *, db_path=None) -> None: ...
+def upsert_vectors(pairs: list[tuple[str, bytes]], *, db_path=None) -> None: ...
+def upsert_entities(entities: list[Entity], *, db_path=None) -> None: ...
+def upsert_mentions(mentions: list[Mention], *, db_path=None) -> None: ...
+def entities_for_email(email_id: str, *, db_path=None) -> list[Entity]: ...
+def emails_for_entity(entity_id: str, *, db_path=None) -> list[str]: ...
+def neighbors(entity_id: str, *, hops: int = 1, db_path=None) -> list[Entity]: ...
+def load_all_vectors(*, db_path=None) -> tuple[list[str], "np.ndarray"]:
+    """One contiguous matrix, not a list of arrays — this is Track B's hot
+    path for the vector search channel."""
+
+# context/consolidate.py
+def consolidate(db_path=None) -> "ConsolidateStats":
+    """Corpus-wide: resolves pending mentions via context.resolve, derives
+    relation edges (participant_in by co-occurrence, belongs_to when a
+    project co-occurs with a case across >=2 emails, symmetric mentions
+    edges otherwise), then marks affected node_brief rows dirty by
+    recomputing evidence_hash. Must run after the WHOLE corpus's
+    chunk/embed/extract pass, before ANY email's reasoning pass — see
+    pipeline/orchestrate.py's process_context_one docstring."""
+```
+
+## Embeddings (Track A) → local vectors for entity resolution and retrieval
+
+```python
+# llm/embeddings.py
+def embed_texts(texts: list[str], *, model: str = "nomic-embed-text") -> list[bytes]:
+    """POSTs to ollama's /api/embed, batched. Vectors are normalized ON
+    WRITE and stored as float32 little-endian BLOBs, so cosine at query
+    time is a plain dot product — required for Track B's search path to
+    stay fast."""
+
+def cosine(a: bytes, b: bytes) -> float: ...
+def cosine_matrix(query: bytes, matrix: "np.ndarray") -> "np.ndarray": ...
+def to_blob(vec) -> bytes: ...
+def from_blob(blob: bytes) -> "np.ndarray": ...
+
+def check() -> str:
+    """Distinguishes 'ollama server is not running' from 'nomic-embed-text
+    is not pulled' — model llm/ollama.py:201's check()."""
+```
+
+## Retrieval (Track B) → produces `ContextPack`/`Brief`
+
+```python
+# retrieval/search.py
+@dataclass
+class ScoredChunk:
+    chunk_id: str
+    email_id: str
+    text: str
+    score: float
+    channel: str
+
+def search(
+    query: str,
+    *,
+    k: int = 12,
+    anchor_email_id: str | None = None,
+    filters: dict | None = None,
+    db_path=None,
+) -> list[ScoredChunk]:
+    """Three independent channels — FTS5 bm25() over chunk_fts, cached-
+    matrix vector cosine, and a graph walk (entities_for_email -> neighbors
+    -> emails_for_entity, decayed per hop) — fused with Reciprocal Rank
+    Fusion (sum of 1/(60+rank) per channel), never a weighted sum of raw
+    scores. The graph channel is what produces cross-thread correlation."""
+
+# retrieval/pack.py
+def build_pack(
+    *,
+    anchor_email_id: str | None = None,
+    query: str | None = None,
+    budget_chars: int = 6000,
+    db_path=None,
+) -> ContextPack:
+    """The ONLY context-assembly function in the codebase — outline
+    generation, context-aware summarization, and agent/tools.py's
+    search_context tool all call this, never build context strings by
+    hand. Fixed priority order until budget_chars is spent: anchor's own
+    summary/subject, thread brief, case/project briefs, their open_items,
+    then top-k foreign chunks from search(). Every foreign ContextSection's
+    label carries provenance ("From <sender>, <date>, re: <subject>").
+    Deduplicates by email_id; never includes the anchor's own chunks as
+    foreign."""
+
+# retrieval/briefs.py
+def rebuild_dirty(db_path=None, *, limit: int | None = None) -> int:
+    """One LLM call (stage 'brief') per node whose evidence_hash changed.
+    Skips nodes with fewer than 2 emails, and skips entirely when
+    evidence_hash is unchanged — the whole point of storing it. Brief
+    content is a state document (what's happened / who's involved / what's
+    open / what was decided), not a per-email summary list."""
+
+def get_brief(node_type: str, node_id: str, db_path=None) -> Brief | None: ...
+```
+
+## Agent (Track C) → the in-app assistant
+
+```python
+# agent/tools.py
+TOOL_SPECS: list[dict]   # Anthropic tool-definition format
+
+def dispatch(name: str, args: dict, *, db_path=None) -> dict:
+    """Nine tools, each reusing an existing implementation rather than
+    reimplementing it — see agent/tools.py's own docstring for the mapping.
+    Every result is JSON-serializable AND bounded (capped lists, truncated
+    text) — an unbounded get_email on a 5000-char body blows the loop's
+    context by turn three."""
+
+# agent/loop.py
+def run(messages: list[dict], *, max_turns: int = 8, db_path=None) -> "Iterator[Event]":
+    """Standard Anthropic tool-use loop via llm.client.get_client("agent").
+    Raises immediately, before the first API call, if the resolved provider
+    is ollama — llm/ollama.py has no tool-calling support and would
+    otherwise silently ignore `tools=` and return a confident, tool-free
+    answer. Yields text_delta/tool_start/tool_end/done events so the
+    transport layer can stream them. Never claims to have sent anything;
+    grounds answers in tool results and cites email_ids."""
+```
+
+---
+
 ## Notes on gating (applies to Drafting)
 
 `generate_reply_outline` must check `read_status` and `is_no_reply` with a

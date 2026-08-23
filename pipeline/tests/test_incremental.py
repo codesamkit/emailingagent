@@ -16,7 +16,7 @@ from models.schema import (
     ReplyOutlineStatus,
 )
 from pipeline import incremental
-from pipeline.orchestrate import STAGES
+from pipeline.orchestrate import ALL_STAGE_NAMES
 
 UTC = timezone.utc
 NOW = datetime(2026, 8, 24, 12, tzinfo=UTC)
@@ -45,6 +45,7 @@ def complete(email_id="e1", read_status=ReadStatus.UNREAD, **overrides) -> Proce
         reply_outline=None,
         reply_outline_status=ReplyOutlineStatus.NONE,
         processed_at=NOW,
+        context_processed_at=NOW,
     )
     defaults.update(overrides)
     return ProcessedEmail(**defaults)
@@ -75,10 +76,12 @@ class TestNothingToDo:
 
 class TestFirstRun:
     def test_never_processed_runs_every_stage(self):
-        assert incremental.stages_for(raw(), None) == tuple(STAGES)
+        assert incremental.stages_for(raw(), None) == tuple(ALL_STAGE_NAMES)
 
     def test_processed_at_none_runs_every_stage(self):
-        assert incremental.stages_for(raw(), complete(processed_at=None)) == tuple(STAGES)
+        assert incremental.stages_for(raw(), complete(processed_at=None)) == tuple(
+            ALL_STAGE_NAMES
+        )
 
 
 class TestReadStatusFlip:
@@ -207,6 +210,36 @@ class TestPartialRecords:
     def test_non_scheduling_email_never_gets_propose_event_scheduled(self):
         record = complete(is_scheduling_related=False)
         assert incremental.stages_for(raw(), record) == ()
+
+
+class TestContextPass:
+    """chunk/embed/extract share one completion marker (context_processed_at)
+    and must never be invalidated by a read-status flip — the body content
+    didn't change, only whether the user has opened the message."""
+
+    def test_missing_context_pass_reruns_chunk_embed_extract(self):
+        record = complete(context_processed_at=None)
+        stages = incremental.stages_for(raw(), record)
+        assert stages == ("chunk", "embed", "extract")
+
+    def test_context_pass_done_is_not_retried(self):
+        assert incremental.stages_for(raw(), complete()) == ()
+
+    def test_read_flip_does_not_rerun_the_context_pass(self):
+        was_unread = complete(context_processed_at=NOW, read_status=ReadStatus.UNREAD)
+        now_read = raw(read_status=ReadStatus.READ)
+        stages = incremental.stages_for(now_read, was_unread)
+        assert "chunk" not in stages and "embed" not in stages and "extract" not in stages
+        assert stages == ("outline",)
+
+    def test_missing_context_pass_and_read_flip_together(self):
+        """Both due at once: context pass because it's missing, outline
+        because of the flip — not because the flip touched the context
+        pass too."""
+        was_unread = complete(context_processed_at=None, read_status=ReadStatus.UNREAD)
+        now_read = raw(read_status=ReadStatus.READ)
+        stages = incremental.stages_for(now_read, was_unread)
+        assert stages == ("chunk", "embed", "extract", "outline")
 
 
 class TestSummarizePlan:

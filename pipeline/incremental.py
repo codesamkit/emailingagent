@@ -16,7 +16,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 from models.schema import ProcessedEmail, ProposedEventStatus, RawEmail, ReadStatus
 
-from .orchestrate import STAGES
+from .orchestrate import ALL_STAGE_NAMES
 
 # Which stage fills which field. A stage is due when its field is still unset.
 _STAGE_OUTPUT = {
@@ -25,6 +25,15 @@ _STAGE_OUTPUT = {
     "summarize": "summary",
     "categorize": "category",
     "scheduling": "is_scheduling_related",
+    # chunk/embed/extract (the context pass) don't write to a ProcessedEmail
+    # field each — they write chunk/chunk_vec/mention rows instead — so all
+    # three share one completion marker rather than three independent ones.
+    # There's no partial state where chunks exist but extraction doesn't
+    # that this module needs to reason about; process_context_one runs them
+    # as one atomic per-email unit.
+    "chunk": "context_processed_at",
+    "embed": "context_processed_at",
+    "extract": "context_processed_at",
 }
 
 
@@ -38,7 +47,7 @@ def stages_for(
     the email entirely, making a no-op re-run cost zero LLM calls.
     """
     if existing is None or existing.processed_at is None:
-        return tuple(STAGES)
+        return tuple(ALL_STAGE_NAMES)
 
     due: List[str] = [
         stage
@@ -54,7 +63,9 @@ def stages_for(
     read_flipped = ReadStatus(raw.read_status) != ReadStatus(existing.read_status)
     if read_flipped:
         # Only eligibility changed. Classification, score, and summary are
-        # unaffected by whether the user has opened the message.
+        # unaffected by whether the user has opened the message — and
+        # neither is the context graph: the body didn't change, so
+        # chunk/embed/extract must NOT be appended here, only "outline".
         due.append("outline")
     elif _outline_missing(existing):
         due.append("outline")
@@ -71,8 +82,9 @@ def stages_for(
     ):
         due.append("propose_event")
 
-    # Preserve canonical stage order; the pipeline depends on it.
-    return tuple(stage for stage in STAGES if stage in set(due))
+    # Preserve canonical stage order (context pass before reasoning pass);
+    # the two-pass architecture depends on it.
+    return tuple(stage for stage in ALL_STAGE_NAMES if stage in set(due))
 
 
 def _outline_missing(existing: ProcessedEmail) -> bool:
@@ -110,6 +122,6 @@ def summarize_plan(plan_map: Dict[str, Tuple[str, ...]], total: int) -> str:
         for stage in stages:
             counts[stage] = counts.get(stage, 0) + 1
     detail = ", ".join(
-        "{0}x{1}".format(stage, counts[stage]) for stage in STAGES if stage in counts
+        "{0}x{1}".format(stage, counts[stage]) for stage in ALL_STAGE_NAMES if stage in counts
     )
     return "{0}/{1} emails need work ({2})".format(len(plan_map), total, detail)

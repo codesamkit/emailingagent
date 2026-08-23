@@ -9,7 +9,11 @@ import pytest
 from models.schema import (
     CalendarContext,
     CalendarSlot,
+    Chunk,
+    ChunkKind,
     ImportanceLevel,
+    Mention,
+    MentionSource,
     ProcessedEmail,
     ProposedEvent,
     ProposedEventStatus,
@@ -18,7 +22,7 @@ from models.schema import (
     ReplyOutlineStatus,
 )
 from pipeline import persist
-from pipeline.orchestrate import STAGES, Pipeline, to_processed
+from pipeline.orchestrate import ALL_STAGE_NAMES, CONTEXT_STAGES, STAGES, Pipeline, to_processed
 
 UTC = timezone.utc
 NOW = datetime(2026, 8, 24, 12, tzinfo=UTC)
@@ -396,3 +400,108 @@ class TestPersistenceRoundTrip:
         assert not persist.update_proposed_event_status(
             "nope", ProposedEventStatus.DECLINED, db_path=tmp_path / "t.db"
         )
+
+
+def _chunks(email_id="e1"):
+    return [
+        Chunk(chunk_id="c1", email_id=email_id, ord=0, text="the body text", kind=ChunkKind.BODY),
+        Chunk(chunk_id="c2", email_id=email_id, ord=1, text="> quoted reply", kind=ChunkKind.QUOTED),
+        Chunk(chunk_id="c3", email_id=email_id, ord=2, text="-- \nDana", kind=ChunkKind.SIGNATURE),
+    ]
+
+
+class TestContextGraphPass:
+    """Pipeline.process_context_one — chunk -> embed -> extract for one
+    email, run through the same _run_stage isolation every other stage
+    gets. Separate from process_one/the STAGES tuple entirely."""
+
+    def test_stage_names_are_disjoint_from_and_ordered_before_stages(self):
+        assert CONTEXT_STAGES == ("chunk", "embed", "extract")
+        assert set(CONTEXT_STAGES).isdisjoint(STAGES)
+        assert ALL_STAGE_NAMES == tuple(CONTEXT_STAGES) + tuple(STAGES)
+
+    def test_runs_chunk_embed_extract_in_order(self):
+        called = []
+        pipeline = Pipeline(
+            chunk=lambda raw_email: called.append("chunk") or _chunks(raw_email.email_id),
+            embed=lambda texts: called.append("embed") or [b"vec"] * len(texts),
+            extract=lambda raw_email, chunks: called.append("extract") or [
+                Mention(
+                    email_id=raw_email.email_id, entity_id="ent1", span_text="Dana",
+                    confidence=1.0, source=MentionSource.HEADER,
+                )
+            ],
+            stages=CONTEXT_STAGES,
+        )
+        chunks, vectors, mentions = pipeline.process_context_one(raw())
+        assert called == ["chunk", "embed", "extract"]
+        assert len(chunks) == 3
+        assert [m.entity_id for m in mentions] == ["ent1"]
+
+    def test_only_body_chunks_are_embedded_and_extracted(self):
+        """Quoted/signature chunks are stored (by context/store.py, not
+        this method) but must never reach embed/extract -- unstripped
+        quote blocks poison embeddings and misattribute entities."""
+        seen_texts = []
+        seen_chunks = []
+        pipeline = Pipeline(
+            chunk=lambda raw_email: _chunks(raw_email.email_id),
+            embed=lambda texts: seen_texts.extend(texts) or [b"vec"] * len(texts),
+            extract=lambda raw_email, chunks: seen_chunks.extend(chunks) or [],
+            stages=CONTEXT_STAGES,
+        )
+        pipeline.process_context_one(raw())
+        assert seen_texts == ["the body text"]
+        assert [c.kind for c in seen_chunks] == [ChunkKind.BODY]
+
+    def test_unwired_stage_returns_empty_and_does_not_crash(self):
+        """with_defaults() leaves these None until Track A's packages
+        exist -- process_context_one must degrade, not raise."""
+        chunks, vectors, mentions = Pipeline(stages=CONTEXT_STAGES).process_context_one(raw())
+        assert (chunks, vectors, mentions) == ([], [], [])
+
+    def test_embed_is_skipped_when_there_are_no_body_chunks(self):
+        embed_calls = []
+        pipeline = Pipeline(
+            chunk=lambda raw_email: [
+                Chunk(chunk_id="c1", email_id=raw_email.email_id, ord=0, text="sig",
+                      kind=ChunkKind.SIGNATURE)
+            ],
+            embed=lambda texts: embed_calls.append(texts) or [],
+            stages=CONTEXT_STAGES,
+        )
+        pipeline.process_context_one(raw())
+        assert embed_calls == []
+
+    def test_a_chunking_failure_does_not_abort_embed_or_extract(self):
+        def boom(raw_email):
+            raise RuntimeError("parse error")
+
+        pipeline = Pipeline(
+            chunk=boom,
+            extract=lambda raw_email, chunks: [] if chunks == [] else None,
+            stages=CONTEXT_STAGES,
+        )
+        chunks, vectors, mentions = pipeline.process_context_one(raw())
+        assert chunks == []
+        assert pipeline.errors and "chunk failed for e1" in pipeline.errors[0]
+
+    def test_disabling_context_stages_skips_them(self):
+        called = []
+        pipeline = Pipeline(
+            chunk=lambda raw_email: called.append("chunk") or _chunks(),
+            stages=STAGES,  # context stages not enabled
+        )
+        chunks, vectors, mentions = pipeline.process_context_one(raw())
+        assert called == []
+        assert (chunks, vectors, mentions) == ([], [], [])
+
+    def test_with_defaults_does_not_crash_when_track_a_packages_are_missing(self):
+        """The whole point of the try/except in with_defaults(): Track A's
+        context/chunk.py, llm/embeddings.py, and context/extract.py don't
+        exist until that branch builds them, and importing this module (the
+        API does) must not start crashing in the meantime."""
+        pipeline = Pipeline.with_defaults(stages=("classify",))
+        assert pipeline._chunk is None
+        assert pipeline._embed is None
+        assert pipeline._extract is None

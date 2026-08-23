@@ -83,14 +83,151 @@ CREATE TABLE IF NOT EXISTS processed_email (
     reply_outline            TEXT,          -- JSON array of bullet strings
     reply_outline_status     TEXT NOT NULL DEFAULT 'none',
 
-    processed_at             TEXT
+    processed_at             TEXT,
+    context_processed_at     TEXT
 );
 CREATE INDEX IF NOT EXISTS ix_processed_importance ON processed_email (importance_score DESC);
 CREATE INDEX IF NOT EXISTS ix_processed_received_at ON processed_email (received_at DESC);
 CREATE INDEX IF NOT EXISTS ix_processed_read_status ON processed_email (read_status);
 """
 
-ALL_SCHEMAS: Tuple[str, ...] = (RAW_EMAIL_SCHEMA, PROCESSED_EMAIL_SCHEMA)
+# --- Context graph (Checkpoint 0, PHASES-COMPLEX.md) -----------------------
+#
+# Eleven new tables, none of which existed before this checkpoint, so none
+# get a MIGRATIONS entry below — that dict is only for columns added to a
+# table that already shipped; a brand-new table's CREATE already has every
+# column. Mirrors models/schema.py's Chunk/Entity/Mention/Relation/Brief/
+# agent_conversation/agent_message additions 1:1.
+
+CONTEXT_SCHEMAS: Tuple[str, ...] = (
+    # chunk_fts is this repo's first FTS5 table: an external-content virtual
+    # table over chunk.text, kept in sync by the three triggers below rather
+    # than duplicating the text into the index.
+    """
+CREATE TABLE IF NOT EXISTS chunk (
+    chunk_id    TEXT PRIMARY KEY,
+    email_id    TEXT NOT NULL,
+    ord         INTEGER NOT NULL,
+    text        TEXT NOT NULL,
+    kind        TEXT NOT NULL CHECK (kind IN ('body', 'quoted', 'signature'))
+);
+CREATE INDEX IF NOT EXISTS ix_chunk_email ON chunk (email_id);
+""",
+    """
+CREATE VIRTUAL TABLE IF NOT EXISTS chunk_fts USING fts5(
+    text,
+    content='chunk',
+    content_rowid='rowid'
+);
+CREATE TRIGGER IF NOT EXISTS chunk_fts_ai AFTER INSERT ON chunk BEGIN
+    INSERT INTO chunk_fts (rowid, text) VALUES (new.rowid, new.text);
+END;
+CREATE TRIGGER IF NOT EXISTS chunk_fts_ad AFTER DELETE ON chunk BEGIN
+    INSERT INTO chunk_fts (chunk_fts, rowid, text) VALUES ('delete', old.rowid, old.text);
+END;
+CREATE TRIGGER IF NOT EXISTS chunk_fts_au AFTER UPDATE ON chunk BEGIN
+    INSERT INTO chunk_fts (chunk_fts, rowid, text) VALUES ('delete', old.rowid, old.text);
+    INSERT INTO chunk_fts (rowid, text) VALUES (new.rowid, new.text);
+END;
+""",
+    """
+CREATE TABLE IF NOT EXISTS chunk_vec (
+    chunk_id    TEXT PRIMARY KEY,
+    dim         INTEGER NOT NULL,
+    vec         BLOB NOT NULL           -- float32 little-endian
+);
+""",
+    """
+CREATE TABLE IF NOT EXISTS entity (
+    entity_id       TEXT PRIMARY KEY,
+    kind            TEXT NOT NULL CHECK (
+        kind IN ('person', 'org', 'case', 'project', 'deliverable', 'document', 'topic')
+    ),
+    canonical_name  TEXT NOT NULL,
+    normalized_key  TEXT NOT NULL,
+    first_seen      TEXT,
+    last_seen       TEXT,
+    mention_count   INTEGER NOT NULL DEFAULT 0,
+    salience        REAL NOT NULL DEFAULT 0.0
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_entity_kind_key ON entity (kind, normalized_key);
+""",
+    """
+CREATE TABLE IF NOT EXISTS entity_alias (
+    entity_id          TEXT NOT NULL,
+    alias              TEXT NOT NULL,
+    normalized_alias   TEXT NOT NULL,
+    PRIMARY KEY (entity_id, alias)
+);
+CREATE INDEX IF NOT EXISTS ix_entity_alias_normalized ON entity_alias (normalized_alias);
+""",
+    """
+CREATE TABLE IF NOT EXISTS entity_vec (
+    entity_id   TEXT PRIMARY KEY,
+    vec         BLOB NOT NULL           -- float32 little-endian
+);
+""",
+    """
+CREATE TABLE IF NOT EXISTS mention (
+    mention_id  TEXT PRIMARY KEY,
+    entity_id   TEXT NOT NULL,
+    email_id    TEXT NOT NULL,
+    chunk_id    TEXT,
+    span_text   TEXT NOT NULL,
+    confidence  REAL NOT NULL,
+    source      TEXT NOT NULL CHECK (source IN ('header', 'regex', 'llm'))
+);
+CREATE INDEX IF NOT EXISTS ix_mention_email ON mention (email_id);
+CREATE INDEX IF NOT EXISTS ix_mention_entity ON mention (entity_id);
+""",
+    """
+CREATE TABLE IF NOT EXISTS relation (
+    src_entity_id        TEXT NOT NULL,
+    dst_entity_id        TEXT NOT NULL,
+    rel                  TEXT NOT NULL CHECK (
+        rel IN ('belongs_to', 'participant_in', 'mentions', 'owner_of')
+    ),
+    weight               REAL NOT NULL DEFAULT 0.0,
+    evidence_email_ids   TEXT NOT NULL DEFAULT '[]',   -- JSON array of email ids
+    PRIMARY KEY (src_entity_id, dst_entity_id, rel)
+);
+""",
+    """
+CREATE TABLE IF NOT EXISTS node_brief (
+    node_type            TEXT NOT NULL CHECK (
+        node_type IN ('thread', 'case', 'project', 'person')
+    ),
+    node_id              TEXT NOT NULL,
+    headline             TEXT,
+    body_md              TEXT,
+    open_items           TEXT NOT NULL DEFAULT '[]',   -- JSON array of strings
+    evidence_email_ids   TEXT NOT NULL DEFAULT '[]',   -- JSON array of email ids
+    evidence_hash        TEXT,
+    generated_at         TEXT,
+    PRIMARY KEY (node_type, node_id)
+);
+""",
+    """
+CREATE TABLE IF NOT EXISTS agent_conversation (
+    conversation_id   TEXT PRIMARY KEY,
+    title             TEXT,
+    created_at        TEXT NOT NULL,
+    updated_at        TEXT NOT NULL
+);
+""",
+    """
+CREATE TABLE IF NOT EXISTS agent_message (
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    conversation_id    TEXT NOT NULL,
+    role               TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+    content            TEXT NOT NULL,      -- JSON: list of Anthropic content blocks
+    created_at         TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_agent_message_conversation ON agent_message (conversation_id);
+""",
+)
+
+ALL_SCHEMAS: Tuple[str, ...] = (RAW_EMAIL_SCHEMA, PROCESSED_EMAIL_SCHEMA) + CONTEXT_SCHEMAS
 
 # Columns added after a table first shipped: {table: ((column, DDL), ...)}.
 # Applied on every open so a database written by an earlier version keeps
@@ -116,6 +253,10 @@ MIGRATIONS: Dict[str, Sequence[Tuple[str, str]]] = {
             "proposed_event_status",
             "ALTER TABLE processed_email ADD COLUMN proposed_event_status "
             "TEXT NOT NULL DEFAULT 'none'",
+        ),
+        (
+            "context_processed_at",
+            "ALTER TABLE processed_email ADD COLUMN context_processed_at TEXT",
         ),
     ),
 }
