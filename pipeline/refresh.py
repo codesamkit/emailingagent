@@ -180,6 +180,16 @@ def refresh_one(email_id: str, db_path: Optional[Path] = None):
 
     existing = {e.email_id: e for e in persist.all_processed(db_path)}
     stages = incremental.stages_for(raw, existing.get(email_id))
+    # Keep this call fast: it runs synchronously while the user is staring at
+    # "Generating reply outline..." right after opening a previously-unread
+    # email. Full-draft expansion is a second, separate LLM call on top of
+    # the outline's own — doubling this live wait for a draft the user isn't
+    # looking at yet. The extension's periodic /api/refresh poll (every 2
+    # minutes, see extension/content/api.js's PIPELINE_REFRESH_MS) picks up
+    # the missing draft in the background instead; the on-demand /expand
+    # endpoint still covers the rare case someone opens the outline before
+    # that poll runs.
+    stages = tuple(s for s in stages if s != "expand")
     if stages:
         pipeline = Pipeline.with_defaults(stages=stages)
         persist.upsert(pipeline.process([raw], existing=existing), db_path)
