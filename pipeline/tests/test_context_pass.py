@@ -69,8 +69,8 @@ class StageConstantsTest(unittest.TestCase):
     def test_the_existing_reasoning_stage_order_is_unchanged(self):
         self.assertEqual(
             STAGES,
-            ("classify", "score", "summarize", "categorize", "scheduling",
-             "calendar", "propose_event", "outline"),
+            ("classify", "score", "summarize", "action_items", "categorize",
+             "scheduling", "calendar", "propose_event", "outline"),
         )
 
 
