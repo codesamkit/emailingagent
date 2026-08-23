@@ -38,6 +38,44 @@ function apiExpandDraft_(emailId) {
   return parseOrThrow_(response);
 }
 
+function apiApproveEvent_(emailId) {
+  var response = UrlFetchApp.fetch(
+    apiBaseUrl_() + '/api/emails/' + encodeURIComponent(emailId) + '/calendar-event/approve',
+    { method: 'post', headers: authHeaders_(), muteHttpExceptions: true }
+  );
+  return parseOrThrow_(response);
+}
+
+function apiDeclineEvent_(emailId) {
+  var response = UrlFetchApp.fetch(
+    apiBaseUrl_() + '/api/emails/' + encodeURIComponent(emailId) + '/calendar-event/decline',
+    { method: 'post', headers: authHeaders_(), muteHttpExceptions: true }
+  );
+  return parseOrThrow_(response);
+}
+
+function apiUpdateEvent_(emailId, payload) {
+  var response = UrlFetchApp.fetch(
+    apiBaseUrl_() + '/api/emails/' + encodeURIComponent(emailId) + '/calendar-event/update',
+    {
+      method: 'post',
+      contentType: 'application/json',
+      headers: authHeaders_(),
+      payload: JSON.stringify(payload),
+      muteHttpExceptions: true,
+    }
+  );
+  return parseOrThrow_(response);
+}
+
+function apiCancelEvent_(emailId) {
+  var response = UrlFetchApp.fetch(
+    apiBaseUrl_() + '/api/emails/' + encodeURIComponent(emailId) + '/calendar-event/cancel',
+    { method: 'post', headers: authHeaders_(), muteHttpExceptions: true }
+  );
+  return parseOrThrow_(response);
+}
+
 function parseOrThrow_(response) {
   var code = response.getResponseCode();
   if (code < 200 || code >= 300) {

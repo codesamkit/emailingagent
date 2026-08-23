@@ -65,6 +65,14 @@ class FakeEvents:
         self._owner.insert_calls.append({"calendarId": calendarId, "body": body})
         return _Request(self._owner._next(self._owner.insert_responses))
 
+    def patch(self, calendarId: str, eventId: str, body: Dict[str, Any]):
+        self._owner.patch_calls.append({"calendarId": calendarId, "eventId": eventId, "body": body})
+        return _Request(self._owner._next(self._owner.patch_responses))
+
+    def delete(self, calendarId: str, eventId: str):
+        self._owner.delete_calls.append({"calendarId": calendarId, "eventId": eventId})
+        return _Request(self._owner._next(self._owner.delete_responses))
+
 
 class FakeCalendars:
     def __init__(self, owner: "FakeCalendarService"):
@@ -90,15 +98,21 @@ class FakeCalendarService:
         events_responses: Optional[List[Any]] = None,
         calendars_responses: Optional[List[Any]] = None,
         insert_responses: Optional[List[Any]] = None,
+        patch_responses: Optional[List[Any]] = None,
+        delete_responses: Optional[List[Any]] = None,
     ):
         self.freebusy_responses = list(freebusy_responses or [{"calendars": {}}])
         self.events_responses = list(events_responses or [{"items": []}])
         self.calendars_responses = list(calendars_responses or [{"timeZone": "UTC"}])
         self.insert_responses = list(insert_responses or [{"id": "fake-event-id"}])
+        self.patch_responses = list(patch_responses or [{"id": "fake-event-id"}])
+        self.delete_responses = list(delete_responses or [{}])
         self.freebusy_calls: List[Dict[str, Any]] = []
         self.events_calls: List[Dict[str, Any]] = []
         self.calendars_calls: List[str] = []
         self.insert_calls: List[Dict[str, Any]] = []
+        self.patch_calls: List[Dict[str, Any]] = []
+        self.delete_calls: List[Dict[str, Any]] = []
 
     @staticmethod
     def _next(queue: List[Any]):

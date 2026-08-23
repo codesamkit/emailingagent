@@ -6,22 +6,26 @@ calls; serving is a fast read of rows that job already wrote. Keeping those
 apart means no HTTP request ever waits on the pipeline, and the API needs no
 long timeouts, no job queue, and no background workers to be correct.
 
-The mutating endpoints (edit an outline, expand a draft, approve/decline a
-proposed calendar event) are per-email and human-triggered. Nothing here
-sends email. Creating a calendar event happens only from the approve
-endpoint, in direct response to a human click — never from a batch run.
+Every mutating endpoint (edit an outline, expand a draft, approve/decline a
+proposed calendar event, update/cancel an approved one) is per-email and
+human-triggered — none of them is ever called by the batch pipeline. There
+is still no send-email endpoint; that stays out of the product until it is
+explicitly built and gated the same way.
 """
 
 from __future__ import annotations
 
 import logging
 import os
+from dataclasses import replace
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from fastapi import Body, Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from pydantic import BaseModel
 
 from models.schema import ProposedEventStatus, ReplyOutlineStatus
 from pipeline import persist
@@ -357,6 +361,129 @@ def decline_calendar_event(email_id: str) -> Dict[str, Any]:
         )
 
     persist.update_proposed_event_status(email_id, ProposedEventStatus.DECLINED, db_path=DB_PATH)
+    return email_to_json(persist.get(email_id, DB_PATH), include_calendar=True)
+
+
+def _calendar_http_error(exc: Any) -> HTTPException:
+    """Map a googleapiclient HttpError for update/cancel, the way
+    `refresh_email` maps Gmail's. 403 here almost always means the stored
+    Calendar token predates the write scope — re-running
+    `python -m calendaring.cli auth` re-consents, so the fix is "try again",
+    not a code change.
+    """
+    status = getattr(getattr(exc, "resp", None), "status", None)
+    if status == 404:
+        return HTTPException(status_code=404, detail="Calendar event not found — it may already be gone.")
+    if status == 403:
+        return HTTPException(
+            status_code=503,
+            detail=(
+                "Calendar write access unavailable ({0}). Run `python -m "
+                "calendaring.cli auth` to grant the write scope, then retry.".format(exc)
+            ),
+        )
+    return HTTPException(status_code=502, detail="Calendar error: {0}".format(exc))
+
+
+class UpdateProposedEventBody(BaseModel):
+    summary: Optional[str] = None
+    start: Optional[datetime] = None
+    end: Optional[datetime] = None
+    description: Optional[str] = None
+    location: Optional[str] = None
+    attendees: Optional[List[str]] = None
+
+
+@app.post("/api/emails/{email_id}/calendar-event/update", dependencies=[Depends(require_token)])
+def update_calendar_event(email_id: str, body: UpdateProposedEventBody) -> Dict[str, Any]:
+    """Rename, reschedule, or otherwise edit an event already on Google
+    Calendar. Only reachable once `approve` has succeeded (status APPROVED)
+    — an event that was never created, or was declined, has nothing to edit.
+
+    A failed edit leaves the stored event and its APPROVED status untouched:
+    see calendaring/events.py's module docstring for why update_event raises
+    instead of returning an error the way create_event does.
+    """
+    email = persist.get(email_id, DB_PATH)
+    if email is None:
+        raise HTTPException(status_code=404, detail="No processed email {0!r}".format(email_id))
+    proposed = email.proposed_event
+    if (
+        email.proposed_event_status != ProposedEventStatus.APPROVED
+        or proposed is None
+        or not proposed.google_event_id
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="This email has no approved calendar event to update.",
+        )
+
+    from googleapiclient.errors import HttpError
+
+    from calendaring.events import update_event
+
+    try:
+        update_event(
+            proposed.google_event_id,
+            summary=body.summary,
+            start=body.start,
+            end=body.end,
+            description=body.description,
+            location=body.location,
+            attendees=body.attendees,
+        )
+    except HttpError as exc:
+        raise _calendar_http_error(exc)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+    # Google's API was told the same values; trust them locally rather than
+    # re-parsing its response, the same way approve() trusts what it sent.
+    updated = replace(
+        proposed,
+        title=body.summary if body.summary is not None else proposed.title,
+        start=body.start if body.start is not None else proposed.start,
+        end=body.end if body.end is not None else proposed.end,
+        location=body.location if body.location is not None else proposed.location,
+        description=body.description if body.description is not None else proposed.description,
+        attendees=body.attendees if body.attendees is not None else proposed.attendees,
+    )
+    persist.update_proposed_event_status(email_id, ProposedEventStatus.APPROVED, updated, DB_PATH)
+    return email_to_json(persist.get(email_id, DB_PATH), include_calendar=True)
+
+
+@app.post("/api/emails/{email_id}/calendar-event/cancel", dependencies=[Depends(require_token)])
+def cancel_calendar_event(email_id: str) -> Dict[str, Any]:
+    """Delete an approved event from Google Calendar and mark the decision
+    DECLINED — the same terminal state `decline` leaves a never-created
+    proposal in, so the pipeline's terminal-status guard
+    (pipeline/orchestrate.py) leaves this row alone on future runs either way.
+    """
+    email = persist.get(email_id, DB_PATH)
+    if email is None:
+        raise HTTPException(status_code=404, detail="No processed email {0!r}".format(email_id))
+    proposed = email.proposed_event
+    if (
+        email.proposed_event_status != ProposedEventStatus.APPROVED
+        or proposed is None
+        or not proposed.google_event_id
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="This email has no approved calendar event to cancel.",
+        )
+
+    from googleapiclient.errors import HttpError
+
+    from calendaring.events import delete_event
+
+    try:
+        delete_event(proposed.google_event_id)
+    except HttpError as exc:
+        raise _calendar_http_error(exc)
+
+    cleared = replace(proposed, google_event_id=None, error=None)
+    persist.update_proposed_event_status(email_id, ProposedEventStatus.DECLINED, cleared, DB_PATH)
     return email_to_json(persist.get(email_id, DB_PATH), include_calendar=True)
 
 

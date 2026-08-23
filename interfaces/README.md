@@ -197,6 +197,44 @@ def create_event(
     consent popup."""
 ```
 
+> Added post-Phase 8, append-only: `update_event`/`delete_event` in
+> `calendaring/events.py`, no existing signature changed. Called only from
+> `api/main.py`'s `/calendar-event/update` and `/calendar-event/cancel`
+> routes — explicit, human-triggered requests, never the pipeline. Only
+> reachable when `proposed_event_status == APPROVED`, i.e. after `create_event`
+> has already put a real event on Calendar.
+
+```python
+# calendaring/events.py
+def update_event(
+    event_id: str,
+    *,
+    summary: str | None = None,
+    start: datetime | None = None,
+    end: datetime | None = None,
+    description: str | None = None,
+    location: str | None = None,
+    attendees: list[str] | None = None,
+    calendar_id: str = "primary",
+    timezone_name: str | None = None,
+    service=None,
+) -> dict:
+    """events.patch — partial update. Renaming is summary=...; rescheduling
+    is start=.../end=...; an omitted field is left as-is on the event.
+    Unlike create_event, this RAISES on failure: the caller already has its
+    own try/except, and a failed edit must not flip proposed_event_status
+    away from APPROVED — the event still exists with its old data."""
+
+def delete_event(
+    event_id: str,
+    *,
+    calendar_id: str = "primary",
+    service=None,
+) -> None:
+    """events.delete. A 404/410 (already gone) is swallowed, not raised —
+    otherwise raises like update_event."""
+```
+
 ## Drafting (Track C) → produces `reply_outline`
 
 ```python

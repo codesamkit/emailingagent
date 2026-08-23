@@ -506,3 +506,133 @@ class TestDeclineCalendarEvent:
         response = client.post("/api/emails/proposed-meeting/calendar-event/decline")
         assert response.status_code == 200
         assert response.json()["proposedEventStatus"] == "declined"
+
+
+def _approve(client, monkeypatch, google_event_id="gcal-xyz"):
+    """Get `proposed-meeting` into APPROVED state so update/cancel have
+    something to act on — mirrors TestApproveCalendarEvent's own setup."""
+    from calendaring import events as events_module
+    from dataclasses import replace
+
+    monkeypatch.setattr(
+        events_module, "create_event",
+        lambda proposed, **kwargs: replace(proposed, google_event_id=google_event_id),
+    )
+    response = client.post("/api/emails/proposed-meeting/calendar-event/approve")
+    assert response.status_code == 200
+    return response.json()
+
+
+class TestUpdateCalendarEvent:
+    def test_renames_and_reschedules_the_approved_event(self, client, monkeypatch):
+        _approve(client, monkeypatch)
+        from calendaring import events as events_module
+
+        captured = {}
+
+        def fake_update(event_id, **kwargs):
+            captured["event_id"] = event_id
+            captured.update(kwargs)
+            return {"id": event_id}
+
+        monkeypatch.setattr(events_module, "update_event", fake_update)
+
+        new_start = NOW + timedelta(days=4)
+        new_end = new_start + timedelta(minutes=30)
+        response = client.post(
+            "/api/emails/proposed-meeting/calendar-event/update",
+            json={"summary": "Renamed sync", "start": new_start.isoformat(), "end": new_end.isoformat()},
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["proposedEventStatus"] == "approved"
+        assert body["proposedEvent"]["title"] == "Renamed sync"
+        assert body["proposedEvent"]["start"] == new_start.isoformat()
+        assert body["proposedEvent"]["googleEventId"] == "gcal-xyz"
+        assert captured["event_id"] == "gcal-xyz"
+        assert captured["summary"] == "Renamed sync"
+
+    def test_partial_update_only_changes_given_fields(self, client, monkeypatch):
+        approved = _approve(client, monkeypatch)
+        from calendaring import events as events_module
+
+        monkeypatch.setattr(events_module, "update_event", lambda event_id, **kwargs: {"id": event_id})
+
+        response = client.post(
+            "/api/emails/proposed-meeting/calendar-event/update",
+            json={"location": "Room 5"},
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["proposedEvent"]["location"] == "Room 5"
+        assert body["proposedEvent"]["title"] == approved["proposedEvent"]["title"]
+        assert body["proposedEvent"]["start"] == approved["proposedEvent"]["start"]
+
+    def test_requires_an_approved_event(self, client):
+        """proposed-meeting starts SUGGESTED — nothing to update yet."""
+        response = client.post(
+            "/api/emails/proposed-meeting/calendar-event/update", json={"summary": "x"}
+        )
+        assert response.status_code == 409
+
+    def test_unknown_id_is_404(self, client):
+        response = client.post("/api/emails/nope/calendar-event/update", json={"summary": "x"})
+        assert response.status_code == 404
+
+    def test_failed_update_leaves_status_approved(self, client, monkeypatch):
+        """A failed edit must not lose the fact that a real event exists."""
+        _approve(client, monkeypatch)
+        from calendaring import events as events_module
+        from calendaring.tests.fakes import http_error
+
+        def raise_403(event_id, **kwargs):
+            raise http_error(403, "insufficientPermissions")
+
+        monkeypatch.setattr(events_module, "update_event", raise_403)
+
+        response = client.post(
+            "/api/emails/proposed-meeting/calendar-event/update", json={"summary": "x"}
+        )
+        assert response.status_code == 503
+        assert client.get("/api/emails/proposed-meeting").json()["proposedEventStatus"] == "approved"
+
+
+class TestCancelCalendarEvent:
+    def test_cancels_and_marks_declined(self, client, monkeypatch):
+        _approve(client, monkeypatch)
+        from calendaring import events as events_module
+
+        captured = {}
+        monkeypatch.setattr(
+            events_module, "delete_event",
+            lambda event_id, **kwargs: captured.setdefault("event_id", event_id),
+        )
+
+        response = client.post("/api/emails/proposed-meeting/calendar-event/cancel")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["proposedEventStatus"] == "declined"
+        assert body["proposedEvent"]["googleEventId"] is None
+        assert captured["event_id"] == "gcal-xyz"
+
+    def test_requires_an_approved_event(self, client):
+        response = client.post("/api/emails/proposed-meeting/calendar-event/cancel")
+        assert response.status_code == 409
+
+    def test_unknown_id_is_404(self, client):
+        assert client.post("/api/emails/nope/calendar-event/cancel").status_code == 404
+
+    def test_google_403_maps_to_503(self, client, monkeypatch):
+        _approve(client, monkeypatch)
+        from calendaring import events as events_module
+        from calendaring.tests.fakes import http_error
+
+        def raise_403(event_id, **kwargs):
+            raise http_error(403, "insufficientPermissions")
+
+        monkeypatch.setattr(events_module, "delete_event", raise_403)
+
+        response = client.post("/api/emails/proposed-meeting/calendar-event/cancel")
+        assert response.status_code == 503
+        # Cancel failed — the event must still be considered approved.
+        assert client.get("/api/emails/proposed-meeting").json()["proposedEventStatus"] == "approved"

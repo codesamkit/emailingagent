@@ -1,10 +1,18 @@
 # Valence Gmail Add-on
 
 A contextual side panel that shows the currently-open email's Valence
-review — importance, summary, no-reply flag, suggested calendar slots,
+review — importance, summary, no-reply flag, proposed calendar event,
 editable reply outline, expand-to-draft — without leaving Gmail. It calls
-the same `api/` endpoints the web UI uses (`api/README.md`); it doesn't
-process mail itself and never sends anything.
+the same `api/` endpoints the web UI/extension use (`api/README.md`); it
+doesn't process mail itself and never sends email.
+
+For a scheduling email, the pipeline extracts a candidate meeting
+(`calendaring/propose.py`); the panel shows it and lets you **Approve**
+(creates the real Google Calendar event) or **Dismiss**. Once approved, the
+panel can also **rename, reschedule, or cancel** that event — each one an
+explicit tap, never automatic. See `interfaces/README.md`'s "Calendar event
+proposal & creation" section for what's actually happening on the Calendar
+side.
 
 This is Apps Script, not Python — a fundamentally different runtime from
 the rest of the repo, so it's not wired into `pytest`/`requirements.txt`.
@@ -60,5 +68,5 @@ up there.
 |---|---|
 | `appsscript.json` | Manifest: scopes, contextual trigger, URL whitelist |
 | `Card.gs` | Builds the CardService UI from the API response |
-| `Api.gs` | `UrlFetchApp` calls to `GET/PATCH/POST /api/emails/...` |
+| `Api.gs` | `UrlFetchApp` calls to `GET/PATCH/POST /api/emails/...`, including the `/calendar-event/approve\|decline\|update\|cancel` routes |
 | `Auth.gs` | Reads `API_BASE_URL`/`API_TOKEN` from script properties |

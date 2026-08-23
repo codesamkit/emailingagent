@@ -3,13 +3,22 @@
 Reads Google Calendar free/busy and existing events for a date window, proposes
 2–3 open meeting slots inside working hours, and provides a cheap
 scheduling-intent gate that Track C calls before deciding whether an email is
-worth a Calendar API call at all.
+worth a Calendar API call at all. `propose.py` extracts a candidate meeting
+from a scheduling email during pipeline processing (pinned-down date/time
+only — no guessing); `events.py` creates, updates, and cancels the real event
+once a human decides (see [Writing events](#4-writing-events) below).
 
-**Nothing in this package writes to your calendar.** The write scope is
-requested at consent time (see [Scopes](#scopes)) so that event creation in a
-later phase does not force a second consent prompt, but no code path here
-creates, updates, or deletes an event. That stays gated behind an explicit user
-action, per `CONTEXT.md`.
+**Nothing here writes to your calendar on its own.** The write scope
+(`calendar.events`) was requested at consent time from the start (see
+[Scopes](#scopes)) specifically so that event creation could land later
+without forcing a second consent prompt — and now it has. Every write still
+goes through an explicit, human-triggered call: the `create`/`update`/`cancel`
+CLI commands for manual testing, or `api/main.py`'s
+`/calendar-event/approve|decline|update|cancel` routes, reached only from a
+button tap in the Gmail Add-on/Chrome extension or a direct API request —
+never from the batch pipeline. `propose.py` only ever extracts and stores a
+*proposal*; it never calls the Calendar API. That gate is per `CONTEXT.md`'s
+human-in-the-loop rule.
 
 ---
 
@@ -90,6 +99,13 @@ python -m calendaring.cli slots --offline --max-slots 2
 # Phase 1B acceptance check: fake scheduling email -> context + suggested slots
 python -m calendaring.cli demo --offline
 python -m calendaring.cli demo --offline --id plain-2   # shows the gate saying no
+
+# Create / update / cancel a real event — no --offline here; writes have to
+# prove themselves against the real calendar.
+python -m calendaring.cli create --summary "Test event" \
+    --start 2026-08-25T14:00:00 --end 2026-08-25T14:30:00
+python -m calendaring.cli update EVENT_ID --summary "Renamed" --start 2026-08-25T15:00:00 --end 2026-08-25T15:30:00
+python -m calendaring.cli cancel EVENT_ID
 ```
 
 Add `-v` to any command to see retry/backoff and graceful-degradation logging.
@@ -123,7 +139,54 @@ week").
 
 ---
 
-## 4. Behavior worth knowing
+## 4. Writing events
+
+```python
+from calendaring.events import create_event, update_event, delete_event
+from models.schema import ProposedEvent
+
+proposed = ProposedEvent(
+    title="Sync on Q3 roadmap", start=start, end=end,
+    description="Scheduled from Valence", attendees=["them@example.com"],
+)
+result = create_event(proposed)          # -> ProposedEvent with google_event_id or error set
+update_event(result.google_event_id, summary="Renamed", start=new_start, end=new_end)
+delete_event(result.google_event_id)
+```
+
+- **`create_event` takes a `ProposedEvent`**, not loose fields — it's the same
+  object `propose.py` extracts and the pipeline stores on
+  `ProcessedEmail.proposed_event`, so the approve endpoint (its only caller)
+  passes that stored value straight through. **It never raises**: success
+  sets `google_event_id`, any failure sets `error` instead, so the caller can
+  persist a FAILED status without a try/except of its own.
+- **`update_event`/`delete_event` take a plain `event_id` string** (the
+  `google_event_id` an earlier `create_event` produced) and loose fields —
+  there's no proposal left to reuse once an event already exists. Unlike
+  `create_event`, **they raise on failure** — see `events.py`'s module
+  docstring for why that's a deliberate difference, not an inconsistency.
+- **Naming and renaming** is `summary=` on `update_event`; there's no separate
+  "rename" call.
+- **Rescheduling** is `start=`/`end=` on `update_event`; if you pass both,
+  `end` must be after `start`.
+- `update_event` uses `events.patch`, not `events.update`, so any field you
+  don't pass is left exactly as it was — you never have to re-supply the
+  whole event just to change its time.
+- `delete_event` swallows a 404/410 (already gone) instead of raising —
+  cancelling something already cancelled isn't an error from the caller's
+  point of view.
+- None of these three functions is called from the pipeline, a cron job, or
+  anywhere else automatic. The only caller is `api/main.py`'s
+  `/api/emails/{id}/calendar-event/approve|decline|update|cancel` routes, each
+  reached only by an explicit user action (a button in the Gmail Add-on or
+  Chrome extension, or a direct API request) — see `api/README.md`.
+- For manual testing without any UI, use the `create`/`update`/`cancel` CLI
+  commands above — they hit your real calendar, so verify and clean up in
+  Google Calendar's own UI afterward.
+
+---
+
+## 5. Behavior worth knowing
 
 - **Working hours are evaluated in the calendar's own timezone**, looked up once
   via `calendars.get` and cached. `9-17` in UTC would put a Los Angeles user's
@@ -157,7 +220,7 @@ one does not.
 
 ---
 
-## 5. Configuration
+## 6. Configuration
 
 Every value is environment-overridable (`calendaring/config.py`).
 
@@ -179,20 +242,22 @@ Every value is environment-overridable (`calendaring/config.py`).
 
 ---
 
-## 6. Tests
+## 7. Tests
 
 ```bash
 python -m pytest calendaring -q
 ```
 
-151 tests, no network, no consent, no LLM. `tests/fakes.py` scripts the Calendar
-resource chain (`service.freebusy().query(body=...).execute()`) so `context.py`
-is exercised through its real call path, and `ExplodingService` proves that
-passing a pre-built `CalendarContext` makes no API call at all.
+162 tests, no network, no consent, no LLM. `tests/fakes.py` scripts the Calendar
+resource chain (`service.freebusy().query(body=...).execute()`,
+`service.events().insert/patch/delete(...).execute()`) so `context.py` and
+`events.py` are exercised through their real call paths, and
+`ExplodingService` proves that passing a pre-built `CalendarContext` makes no
+API call at all.
 
 ---
 
-## 7. Known coupling to flag
+## 8. Known coupling to flag
 
 - **`calendaring/retry.py` wraps `ingestion.backoff`.** That module is already a
   general Google API retry policy despite its package; reusing it keeps one

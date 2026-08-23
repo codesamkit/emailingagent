@@ -152,6 +152,12 @@ def _normalize_event(raw: Dict[str, Any], calendar_id: str) -> Dict[str, Any]:
         "status": raw.get("status"),
         "organizer": (raw.get("organizer") or {}).get("email"),
         "attendee_count": len(attendees),
+        # Full addresses, not just the count: useful when this event was just
+        # created/updated by the user and the response needs to show exactly
+        # who is invited. Existing consumers (e.g. calendar_to_json) only pick
+        # the keys they need, so adding these doesn't change their output.
+        "attendees": [a.get("email") for a in attendees if a.get("email")],
+        "description": raw.get("description"),
         "location": raw.get("location"),
         "html_link": raw.get("htmlLink"),
     }
