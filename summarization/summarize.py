@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 from typing import Any, List, Optional, Tuple
 
-from models.schema import RawEmail
+from models.schema import ContextPack, RawEmail
 
 def _default_model() -> str:
     from llm.client import model_for
@@ -60,13 +60,23 @@ RESPONSE_SCHEMA = {
 }
 
 
-def format_email_for_prompt(email: RawEmail) -> str:
+def format_email_for_prompt(email: RawEmail, context: Optional[ContextPack] = None) -> str:
     """Shared email-to-prompt-text formatting, used by both summarize() and
-    batch.summarize_batch() so the two stay in sync."""
+    batch.summarize_batch() so the two stay in sync. `context` defaults to
+    None, which preserves the exact prior output — batch.py doesn't pass it
+    and its output is unaffected."""
     from llm.prompting import email_identity_block
 
     header = email_identity_block(email.sender, email.recipients, email.subject)
-    return f"{header}\nBody:\n{email.body}"
+    parts = [header]
+    if context is not None:
+        from retrieval.pack import format_context_for_prompt
+
+        context_text = format_context_for_prompt(context)
+        if context_text:
+            parts.append(context_text)
+    parts.append(f"Body:\n{email.body}")
+    return "\n".join(parts)
 
 
 def _get_default_client() -> Any:
@@ -80,9 +90,16 @@ def _get_default_client() -> Any:
     return get_client("summarize")
 
 
-def summarize(email: RawEmail, client: Optional[Any] = None) -> Tuple[str, List[str]]:
+def summarize(
+    email: RawEmail, client: Optional[Any] = None, context: Optional[ContextPack] = None
+) -> Tuple[str, List[str]]:
     """Returns (1-3 sentence factual summary, dates mentioned verbatim) via a
-    single Claude API call — the dates cost no extra request."""
+    single Claude API call — the dates cost no extra request.
+
+    `context` is an optional retrieval.pack.build_pack() output
+    (PHASES-COMPLEX.md B5) — omitting it (the default) preserves this
+    function's exact prior behavior.
+    """
 
     if client is None:
         client = _get_default_client()
@@ -91,7 +108,7 @@ def summarize(email: RawEmail, client: Optional[Any] = None) -> Tuple[str, List[
         model=_default_model(),
         max_tokens=256,
         system=SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": format_email_for_prompt(email)}],
+        messages=[{"role": "user", "content": format_email_for_prompt(email, context)}],
         output_config={"format": {"type": "json_schema", "schema": RESPONSE_SCHEMA}},
     )
 
