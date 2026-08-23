@@ -251,10 +251,26 @@ Types referenced here — `Chunk`, `ChunkKind`, `Entity`, `EntityKind`,
    the other three, so upserts need `ON CONFLICT (node_type, node_id)`.
 2. The context pass is a **separate pass**, not three more entries in
    `pipeline.orchestrate.STAGES`. `CONTEXT_STAGES` has its own entry point,
-   `Pipeline.run_context()`, because every email's context must be extracted
-   and consolidated before *any* email's outline is generated. Stage names are
-   disjoint across the two lists; `ALL_STAGE_NAMES` is the union, for CLI
-   validation only.
+   `Pipeline.run_context()` / `run_context_one()`, because every email's
+   context must be extracted and consolidated before *any* email's outline is
+   generated. Stage names are disjoint across the two lists; `ALL_STAGE_NAMES`
+   is the union, for CLI validation only.
+3. **"Dirty" means `node_brief.headline IS NULL`.** There is no flag column.
+   `context.consolidate` writes each node's CURRENT `evidence_email_ids` and
+   `evidence_hash`, and clears `headline` / `body_md` / `open_items` when the
+   hash moved; a node whose hash is unchanged is not touched at all, which is
+   what makes a no-op run cost zero brief calls. Track B's work queue is
+   `context.store.dirty_briefs()` — do not re-derive the query, and do not
+   recompute the hash: `context.consolidate.evidence_hash()` is the one
+   definition, and it includes each email's `processed_at`, so a re-summarized
+   email correctly counts as new evidence. After generating, write the brief
+   back with `context.store.upsert_briefs()`, carrying the same
+   `evidence_hash` the dirty row already holds.
+4. Populating the graph before the integration step: `python -m context.cli
+   build` runs the context pass plus `consolidate` over stored mail. It calls
+   the same `Pipeline.run_context_one` the integrated path will, so it is not a
+   second implementation — it exists because the graph has to be inspectable
+   before `pipeline/refresh.py` is rewired (INT1).
 
 ## Context (Track A) → produces chunks, entities, mentions, relations
 
@@ -273,6 +289,25 @@ def chunk_email(
     BODY chunks break on paragraph boundaries to roughly target_chars with
     `overlap` characters of carry-over, and never mid-sentence. `ord` is the
     position within the email across all kinds."""
+
+# context/normalize.py — pure string work, shared by extract and resolve
+def normalize_name(text: str, kind: EntityKind | None = None) -> str:
+    """The identity key for a surface form: lowercased, punctuation dropped,
+    leading article and generic noun removed ("the Atlas project" -> "atlas"),
+    trailing plural folded for the common-noun kinds. Conservative on purpose —
+    over-merging is this layer's primary risk."""
+def normalize_id(text: str) -> str:
+    """The identity key for a machine id: "cs-40350" / "CS 40350" -> "CS40350".
+    Never singularized, never word-dropped."""
+def normalize_address(value: str) -> str:
+    """A bare lowercased address, via scoring.signals._addr_only."""
+def provisional_id(kind: EntityKind, normalized_key: str) -> str:
+    """"<kind>:<key>" — what a Mention.entity_id holds before resolution.
+    `Mention` has no `kind` field, and extraction runs before any entity
+    exists, so the kind rides in the string and `resolve` rewrites it to a real
+    entity_id. A real entity_id contains no ":", so `parse_provisional`
+    returning None doubles as "already resolved"."""
+def parse_provisional(entity_id: str) -> tuple[EntityKind, str] | None: ...
 
 # context/embed.py
 def embed_chunks(chunks: Sequence[Chunk]) -> list[tuple[str, bytes]]:
@@ -344,6 +379,14 @@ def context_coverage(*, db_path=None) -> dict[str, set[str]]:
     """{context stage: email_ids that already have rows}, for
     pipeline.incremental.context_plan."""
 def load_entity_index(*, db_path=None) -> EntityIndex: ...
+def get_brief(node_type, node_id, *, db_path=None) -> Brief | None: ...
+def upsert_briefs(briefs, *, db_path=None) -> int: ...
+def dirty_briefs(*, db_path=None) -> list[Brief]:
+    """Briefs awaiting generation (headline IS NULL), largest evidence set
+    first. Track B's work queue — see contract detail 3 above."""
+def counts(*, db_path=None) -> dict[str, int]: ...
+def entity_counts_by_kind(*, db_path=None) -> dict[str, int]: ...
+def email_counts_for_entities(*, db_path=None) -> dict[str, int]: ...
 
 # context/consolidate.py
 @dataclass
@@ -354,7 +397,11 @@ class ConsolidateStats:
     relations_written: int
     briefs_dirtied: int
 
-def consolidate(db_path=None) -> ConsolidateStats:
+def evidence_hash(pairs: Sequence[tuple[str, str | None]]) -> str:
+    """Hash of (email_id, processed_at) pairs — a node's evidence fingerprint.
+    The ONE definition; Track B reads the stored value rather than recomputing."""
+
+def consolidate(db_path=None, *, threshold=0.86, embed=None) -> ConsolidateStats:
     """Corpus-wide, run once after the context pass and before the reasoning
     pass. Resolves pending mentions, derives relation edges (PERSON
     --participant_in--> CASE|PROJECT by co-occurrence weighted by mention
@@ -419,10 +466,14 @@ def build_pack(*, anchor_email_id=None, query=None, budget_chars=6000, db_path=N
 
 # retrieval/briefs.py
 def rebuild_dirty(db_path=None, *, limit=None) -> int:
-    """One "brief"-stage call per node whose evidence_hash changed. Two gates
-    that decide the cost: only nodes with 2+ emails (160 single-email briefs
-    say nothing the summary didn't), and skip entirely on an unchanged hash."""
-def get_brief(node_type, node_id, db_path=None) -> Brief | None: ...
+    """One "brief"-stage call per node in `context.store.dirty_briefs()`. Two
+    gates decide the cost: only nodes with 2+ emails (160 single-email briefs
+    say nothing the summary didn't), and an unchanged hash never reaches the
+    queue in the first place — consolidate leaves those rows untouched.
+    Write results back with `context.store.upsert_briefs`, preserving the
+    `evidence_hash` already on the row."""
+def get_brief(node_type, node_id, db_path=None) -> Brief | None:
+    """Thin pass-through to `context.store.get_brief` — one read path."""
 ```
 
 ## Agent (Track C) → the in-app assistant

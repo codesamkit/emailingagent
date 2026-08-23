@@ -36,8 +36,10 @@ _STAGE_OUTPUT = {
 # would ever read it, and it would have to be kept in sync with row counts by
 # hand. So the question is answered against the tables instead, and this module
 # stays pure by taking the answer as an argument (see `context.store`'s
-# coverage query) rather than opening a connection itself.
-_CONTEXT_STAGE_TABLE = {
+# coverage query) rather than opening a connection itself. Public rather than
+# underscored because `context.store.context_coverage` reads it to keep the two
+# halves of the map from drifting — that makes it contract, not detail.
+CONTEXT_STAGE_TABLE = {
     "chunk": "chunk",
     "embed": "chunk_vec",
     "extract": "mention",
