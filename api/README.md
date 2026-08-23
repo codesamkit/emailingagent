@@ -98,18 +98,21 @@ processed so far, including nothing.
 
 Local dev needs nothing — `API_TOKEN` is unset, so `api/auth.py`'s gate is a
 no-op, exactly as before this existed. Once the API is deployed somewhere
-network-reachable (e.g. for the Gmail add-on to call it), set `API_TOKEN` on
-the server and every `/api/*` route requires `Authorization: Bearer
-<API_TOKEN>` — everything 401s without it. `/` (the page shell) never
-requires it, so the static page can load and prompt for the token itself;
-the Valence UI stores it in `localStorage` after the first 401 and attaches
-it to every subsequent call (`api/static/index.html`'s `apiFetch`).
+network-reachable, set `API_TOKEN` on the server and every `/api/*` route
+requires `Authorization: Bearer <API_TOKEN>` — everything 401s without it.
+`/` (the page shell) never requires it, so the static page can load and
+prompt for the token itself; the Valence UI stores it in `localStorage`
+after the first 401 and attaches it to every subsequent call
+(`api/static/index.html`'s `apiFetch`). The Chrome extension doesn't
+currently send this header at all (see `extension/background.js`), so it
+only works against a local, unauthenticated backend today.
 
 `EXTRA_ORIGINS` (comma-separated) adds allowed CORS origins beyond the
 `localhost` dev ports — set it to the deployed Valence origin if the web UI
-is served from a different domain than the API. The Gmail add-on itself
-doesn't need a CORS entry; `UrlFetchApp` isn't a browser and isn't subject
-to CORS — only the bearer token applies to it.
+is served from a different domain than the API. The Chrome extension itself
+doesn't need a CORS entry; its background service worker fetches via
+`host_permissions`, not page-context CORS — only the bearer token would
+apply to it if it sent one.
 
 ## Calendar writes
 
@@ -118,8 +121,8 @@ during pipeline processing — stored as `proposedEvent`/`proposedEventStatus`
 on the row, never written to Calendar on its own. The four
 `/calendar-event/*` routes are the only things that ever call
 `calendaring/events.py`'s Calendar API functions, each reached only by an
-explicit human action (a button in the Chrome extension or Gmail Add-on, or a
-direct API request):
+explicit human action (a button in the Chrome extension, or a direct API
+request):
 
 - **`approve`** calls `create_event` — success sets `proposedEvent.googleEventId`
   and status `approved`; failure sets `proposedEvent.error` and status

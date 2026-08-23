@@ -1,9 +1,9 @@
 """Bearer-token gate for `/api/*`.
 
 Local dev never needed this — only your own machine could reach
-`localhost:8000`. Once the API is deployed somewhere network-reachable (for
-the Gmail add-on to call it), that stops being true, so every `/api/*` route
-depends on `require_token` instead of trusting the network boundary.
+`localhost:8000`. Once the API is deployed somewhere network-reachable, that
+stops being true, so every `/api/*` route depends on `require_token` instead
+of trusting the network boundary.
 
 If `API_TOKEN` is unset, the gate is a no-op (`AUTH_DISABLED`) so local dev
 and the existing test suite keep working without configuring a secret.

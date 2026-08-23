@@ -4,20 +4,23 @@ The system architecture for the Valence AI email agent. This is the technical
 source of truth: what runs, how data moves, where state lives, which decisions
 were made and what was rejected.
 
-**Written against `main`.** Work on `track-a-context`, `context-graph-b`, and
-`track-c-agent` is marked as such — those branches contain modules that do not
-exist on `main`.
+**Written against `main`.** `track-a-context`, `context-graph-b`, and
+`track-c-agent` have all been merged: `context/`, `llm/embeddings.py`,
+`retrieval/`, and `agent/` are on `main`. Sections below still carrying a
+🚧 `<branch>` marker are describing where a component came from, not where
+it lives — the per-component ✅/🚧 status has not been re-judged since the
+merge, so treat those markers as "landed, completeness unreviewed".
 
-**Open PRs.** Person C's `track-c-agent` (commit `3834fa5`, items C1–C8) adds
-the in-app agent — see §7.6, §5.6, and the agent rows throughout. It is
-reviewed here as proposed architecture, not as shipped behavior.
+**Not yet wired (INT1).** The two-pass driver is still open: `outline`,
+`summarize`, and `score` accept a `ContextPack` but the pipeline does not
+build or pass one, and `agent/tools.py` still serves `agent/fixtures.py`
+demo data rather than the real graph.
 
 **Companion docs.** `PRODUCT.md` (who it's for), `DESIGN.md` (the visual
 system), `CONTEXT.md` (track ownership + the original 8-phase plan),
 `PHASES-COMPLEX.md` (the context-graph/agent build plan),
 `interfaces/README.md` (per-module function signatures), `FILE-TREE.md`
-(directory layout), `deploy/README.md` (hosting), `gmail-addon/README.md`
-(the Apps Script panel).
+(directory layout), `deploy/README.md` (hosting).
 
 **Status legend.**
 
@@ -61,8 +64,8 @@ agent has no send tool. See §9.4.
 
 ## 2. Deployment topology
 
-There are two supported topologies, and the difference matters because the
-Gmail add-on cannot reach `localhost`.
+There are two supported topologies, and the difference matters because a
+remote client cannot reach `localhost`.
 
 ### 2.1 Local development ✅
 
@@ -101,8 +104,8 @@ flowchart LR
 
 ### 2.2 Hosted ✅
 
-The Gmail add-on calls the API over HTTPS **from Google's servers**, so it
-needs a real host. SQLite is a file, not a network service, so the batch
+Reaching the API from anywhere but the local machine needs a real host.
+SQLite is a file, not a network service, so the batch
 pipeline that writes it and the API that reads it must run on the same host
 sharing one disk. `fly.toml` + `Dockerfile` + `deploy/cron-ingest.sh` are a
 worked example; any host with a persistent volume and a cron facility works.
@@ -118,12 +121,9 @@ flowchart TB
         vol --> api
     end
 
-    addon["Gmail Add-on<br/>Apps Script · UrlFetchApp"]
     web["Valence UI<br/>api/static/index.html"]
 
-    api -->|"HTTPS, force_https"| addon
-    api -->|HTTPS| web
-    addon -->|"Authorization: Bearer API_TOKEN"| api
+    api -->|"HTTPS, force_https"| web
     web -->|"Authorization: Bearer API_TOKEN"| api
 ```
 
@@ -165,7 +165,6 @@ implementation detail, because they have different auth stories.
 | Client | Tech | Status | Sends `Authorization: Bearer`? |
 |---|---|---|---|
 | **Valence web UI** — `api/static/index.html` | One self-contained HTML file, no build step, served by the API at `/` | ✅ | **Yes** — prompts for the token and stores it |
-| **Gmail Add-on** — `gmail-addon/` | Apps Script (`.gs`), contextual side panel in Gmail | ✅ | **Yes** — from a script property |
 | **Chrome extension** — `extension/` | MV3, content scripts injected into `mail.google.com`; adds an "Ask" tab on `track-c-agent` | ✅ / 🚧 | **No** — see §13 |
 | **React app** — `frontend/` | Vite + React 18 + TypeScript + Tailwind, `lucide-react` icons | ✅ | **No** — see §13 |
 
@@ -216,7 +215,7 @@ flowchart TB
     subgraph c["Track C"]
         dra["drafting/"]
         pip["pipeline/"]
-        clients["api/ · interface/ · extension/<br/>frontend/ · gmail-addon/"]
+        clients["api/ · interface/ · extension/<br/>frontend/"]
         agt["agent/ (planned)"]
     end
 
@@ -244,7 +243,7 @@ flowchart TB
 | `pipeline/` | C | Two-pass orchestration, incremental re-run, staleness, persistence | No prompts and no SQL — it sequences other tracks | ✅ |
 | `api/` | C | FastAPI, bearer auth, CORS, static UI | Read-mostly; every `/api/*` route carries `Depends(require_token)` | ✅ |
 | `interface/` | C | Review CLI + shared filters | — | ✅ |
-| `extension/`, `frontend/`, `gmail-addon/` | C | The three non-static clients | See §3 | ✅ |
+| `extension/`, `frontend/` | C | The two non-static clients | See §3 | ✅ |
 | `llm/` | cross | Provider abstraction, per-stage routing, prompt helpers | Every model call goes through `get_client(stage)` | ✅ |
 | `feedback/` | cross | Sender priors from user corrections | Runs after the model; the correction has the last word | ✅ |
 | `deploy/`, `Dockerfile`, `fly.toml` | cross | Hosting, scheduled refresh | Cron is the only scheduler; the API never triggers processing | ✅ |
