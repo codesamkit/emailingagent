@@ -66,20 +66,20 @@ class _FakeClient:
 
 class TestSummarizeContext(unittest.TestCase):
     def test_omitting_context_preserves_prior_prompt_exactly(self):
-        client = _FakeClient({"summary": "A check-in.", "dates": []})
+        client = _FakeClient({"bullets": ["A check-in.", "Nothing is asked of you.", "No deadline stated."], "dates": []})
         summarize.summarize(make_email(), client=client)
         prompt = client.messages.calls[0]["messages"][0]["content"]
         self.assertNotIn("What you already know:", prompt)
 
     def test_context_is_folded_into_the_prompt(self):
-        client = _FakeClient({"summary": "A check-in.", "dates": []})
+        client = _FakeClient({"bullets": ["A check-in.", "Nothing is asked of you.", "No deadline stated."], "dates": []})
         summarize.summarize(make_email(), client=client, context=make_pack())
         prompt = client.messages.calls[0]["messages"][0]["content"]
         self.assertIn("What you already know:", prompt)
         self.assertIn("renewal was approved", prompt)
 
     def test_empty_context_pack_adds_nothing(self):
-        client = _FakeClient({"summary": "A check-in.", "dates": []})
+        client = _FakeClient({"bullets": ["A check-in.", "Nothing is asked of you.", "No deadline stated."], "dates": []})
         summarize.summarize(make_email(), client=client, context=ContextPack())
         prompt = client.messages.calls[0]["messages"][0]["content"]
         self.assertNotIn("What you already know:", prompt)

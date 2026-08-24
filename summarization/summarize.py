@@ -20,40 +20,35 @@ def _default_model() -> str:
 
 # Shared with batch.py so single-call and batched summarization follow the
 # exact same factual/no-inference rules (DRY — see CLAUDE.md).
-# Written for coverage, not brevity. The previous version asked for "1-3
-# sentences" and led with "be strictly factual / do not infer", which a small
-# model reads as permission to stop early: 80 of 163 summaries came back as a
-# single sentence and 59 were under 150 characters, dropping the numbers,
-# names and asks that make a summary worth reading. The factual constraint is
-# still here — it just no longer sits where it competes with completeness.
+# Three bullets, enforced by the schema rather than asked for in prose.
+# This prompt has been wrong in both directions: "1-3 sentences" plus a
+# lead-in about being strictly factual produced 80 single-sentence summaries
+# out of 163, and rewriting it for coverage produced 500-character walls that
+# repeated themselves. Neither is what a triage reader wants. Three fixed
+# slots force the model to choose what matters instead of padding or stopping
+# early, and the array shape makes "three" structural rather than a request a
+# small model can drift off.
 SUMMARY_INSTRUCTIONS = (
-    "Write a summary that lets the reader act on the email without opening "
-    "it. Cover, in this order and only where the email actually contains "
-    "them:\n"
-    "1. What the email is about, concretely — name the subject matter, not "
-    "the genre. \"A shipment is held at customs over an HTS classification "
-    "dispute\", not \"an email about logistics\".\n"
-    "2. Every specific the reader would otherwise have to open the email to "
-    "find: identifiers, order/case/part numbers, quantities, amounts, "
-    "percentages, dates, and the names and roles of the people involved.\n"
-    "3. Everything being asked of the reader. If there are several asks, "
-    "list every one of them — do not collapse them into \"they ask for "
-    "some information\".\n"
-    "4. Any deadline, and any consequence or decision that is stated.\n"
-    "Aim for 3-5 sentences. Use fewer only when the email genuinely contains "
-    "less — a one-line notification does not need padding out.\n"
+    "Summarize the email as exactly three short bullets, in this order:\n"
+    "1. What it is about — the concrete subject matter, with the specific "
+    "identifiers, numbers or names that pin it down.\n"
+    "2. What is being asked of you — every ask, compressed. Write \"nothing "
+    "is asked of you\" if the email requests nothing.\n"
+    "3. The deadline or consequence — write \"no deadline stated\" if there "
+    "is none.\n"
     "\n"
-    "Be strictly factual: include only what is explicitly stated or clearly "
-    "implied in the email text. Do not invent details, and do not infer "
-    "urgency or intentions the email does not express. Completeness means "
-    "covering what is there, never adding what is not.\n"
+    "Each bullet is one sentence, at most about 25 words. Be specific rather "
+    "than complete: \"CBP is holding shipment RPL-2026-4471 over an HTS code "
+    "dispute\" beats a full retelling. Never repeat information across "
+    "bullets, and do not write preamble like \"This email is about\".\n"
     "\n"
-    "The reader is the mailbox owner shown in the To: line — the email was "
-    "sent TO them. Never describe the owner as a third party. When the email "
-    "asks something of them, including by their name, say it is asked of "
-    '"you", and attribute statements and requests to the From: sender. '
-    "Write \"Manny Ortiz asks you to confirm the export code\", never "
-    "\"the sender asks Ronith to confirm\" or \"the recipient is asked\".\n"
+    "Be strictly factual — only what the email states or clearly implies. Do "
+    "not invent details or infer urgency the email does not express.\n"
+    "\n"
+    "The reader is the mailbox owner in the To: line; the email was sent TO "
+    "them. Never describe them in the third person or by name. Write "
+    "\"Manny Ortiz asks you to confirm the export code\", never \"the sender "
+    "asks Ronith\" or \"the recipient is asked\".\n"
     "\n"
     "Separately, list any dates or deadlines mentioned in the email exactly "
     "as stated (e.g. \"Friday, Aug 28\", \"by EOD Thursday\") — do not "
@@ -62,26 +57,29 @@ SUMMARY_INSTRUCTIONS = (
 )
 
 SYSTEM_PROMPT = (
-    "You write factual, complete summaries of inbox emails for a busy reader "
-    "triaging their inbox. The reader decides what to open next based on your "
-    "summary alone, so leaving out a number, a name, or an ask costs them "
-    "more than a few extra words does.\n\n" + SUMMARY_INSTRUCTIONS
+    "You summarize inbox emails for a reader triaging a full inbox at speed. "
+    "They read three bullets and decide whether to open the mail. Every word "
+    "that is not a fact they would act on is in their way.\n\n"
+    + SUMMARY_INSTRUCTIONS
 )
 
 # maxLength is enforced structurally by constrained decoding, which makes a
-# repetition loop inside the string impossible rather than just discouraged.
+# repetition loop inside a bullet impossible rather than just discouraged.
 RESPONSE_SCHEMA = {
     "type": "object",
     "properties": {
-        # Headroom for the 3-5 sentences the instructions ask for. This is a
-        # backstop against a runaway loop, not a length target — the
-        # instructions set the length. Whatever the value, constrained
-        # decoding stops mid-token when it is reached rather than winding the
-        # sentence up, so `_trim_to_sentence` below repairs the tail; the two
-        # work together and raising one without the other just moves where
-        # the mid-word cut lands.
-        "summary": {"type": "string", "maxLength": 1600},
-        # Bounded the same way summary is — a repetition loop inside the
+        # Exactly three, fixed by the schema. min == max is the point: told
+        # "three bullets" in prose a small model will happily return one or
+        # seven, and constrained decoding is what makes the shape a
+        # guarantee. 200 chars fits ~25 words with room for a long
+        # identifier; `_trim_to_sentence` repairs the tail if one reaches it.
+        "bullets": {
+            "type": "array",
+            "items": {"type": "string", "maxLength": 200},
+            "minItems": 3,
+            "maxItems": 3,
+        },
+        # Bounded the same way the bullets are — a repetition loop inside the
         # array becomes structurally impossible, not just discouraged.
         "dates": {
             "type": "array",
@@ -89,7 +87,7 @@ RESPONSE_SCHEMA = {
             "maxItems": 5,
         },
     },
-    "required": ["summary", "dates"],
+    "required": ["bullets", "dates"],
     "additionalProperties": False,
 }
 
@@ -129,6 +127,29 @@ def _trim_to_sentence(summary: str) -> str:
     return summary[: cut + 1] if cut > 0 else summary
 
 
+def join_bullets(bullets: Any) -> str:
+    """Render the model's three bullets into the single string the frozen
+    `summary` field holds.
+
+    Stored newline-separated with no marker character: consumers that show
+    the summary as plain text (the CLI, the agent's tool output, node briefs)
+    read it as three lines, and the ones that render it — the extension's
+    detail pane — split on the newline and build a real list. Putting a "-"
+    in the stored text would show up literally in every plain-text consumer.
+    """
+    lines = []
+    for bullet in bullets or []:
+        line = _trim_to_sentence(str(bullet))
+        # minItems=3 guarantees three slots, which is the point — but a small
+        # model with nothing to put in the third fills it with punctuation
+        # ("," was a real response). A slot the model had no content for is
+        # dropped rather than rendered as an empty bullet; two real bullets
+        # beat three with a comma in the middle.
+        if len(line) >= 4 and any(ch.isalnum() for ch in line):
+            lines.append(line)
+    return "\n".join(lines)
+
+
 def format_email_for_prompt(email: RawEmail, context: Optional[ContextPack] = None) -> str:
     """Shared email-to-prompt-text formatting, used by both summarize() and
     batch.summarize_batch() so the two stay in sync. `context` defaults to
@@ -162,7 +183,7 @@ def _get_default_client() -> Any:
 def summarize(
     email: RawEmail, client: Optional[Any] = None, context: Optional[ContextPack] = None
 ) -> Tuple[str, List[str]]:
-    """Returns (factual summary, dates mentioned verbatim) via a single
+    """Returns (three-bullet summary, dates mentioned verbatim) via a single
     Claude API call — the dates cost no extra request.
 
     `context` is an optional retrieval.pack.build_pack() output
@@ -175,9 +196,9 @@ def summarize(
 
     response = client.messages.create(
         model=_default_model(),
-        # Must comfortably exceed the schema's maxLength: a response cut off
-        # by the token budget is invalid JSON, not a short summary.
-        max_tokens=768,
+        # Must comfortably exceed the schema's total maxLength: a response
+        # cut off by the token budget is invalid JSON, not a short summary.
+        max_tokens=400,
         system=SYSTEM_PROMPT,
         messages=[{"role": "user", "content": format_email_for_prompt(email, context)}],
         output_config={"format": {"type": "json_schema", "schema": RESPONSE_SCHEMA}},
@@ -185,7 +206,7 @@ def summarize(
 
     text = next(block.text for block in response.content if block.type == "text")
     data = json.loads(text)
-    summary = _trim_to_sentence(str(data["summary"]))
+    summary = join_bullets(data["bullets"])
     dates = [str(d) for d in data["dates"]]
 
     if not summary:

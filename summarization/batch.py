@@ -19,6 +19,7 @@ from summarization.summarize import (
     SUMMARY_INSTRUCTIONS,
     _default_model,
     format_email_for_prompt,
+    join_bullets,
 )
 
 # Emails per LLM call. Bounds prompt size per call while still amortizing
@@ -43,16 +44,21 @@ RESPONSE_SCHEMA = {
                 "type": "object",
                 "properties": {
                     "email_id": {"type": "string", "maxLength": 100},
-                    # Same bounds as summarize.py's single-call schema — the
-                    # two promise an identical output contract.
-                    "summary": {"type": "string", "maxLength": 450},
+                    # Same shape and bounds as summarize.py's single-call
+                    # schema — the two promise an identical output contract.
+                    "bullets": {
+                        "type": "array",
+                        "items": {"type": "string", "maxLength": 200},
+                        "minItems": 3,
+                        "maxItems": 3,
+                    },
                     "dates": {
                         "type": "array",
                         "items": {"type": "string", "maxLength": 60},
                         "maxItems": 5,
                     },
                 },
-                "required": ["email_id", "summary", "dates"],
+                "required": ["email_id", "bullets", "dates"],
                 "additionalProperties": False,
             },
         },
@@ -110,6 +116,9 @@ def summarize_batch(
         text = next(block.text for block in response.content if block.type == "text")
         data = json.loads(text)
         for item in data["summaries"]:
-            results[str(item["email_id"])] = (str(item["summary"]), [str(d) for d in item["dates"]])
+            results[str(item["email_id"])] = (
+                join_bullets(item["bullets"]),
+                [str(d) for d in item["dates"]],
+            )
 
     return results

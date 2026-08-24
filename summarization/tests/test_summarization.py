@@ -90,18 +90,27 @@ class _FakeClient:
 class TestSummarize(unittest.TestCase):
     def test_parses_structured_response(self):
         fake_client = _FakeClient({
-            "summary": "Jordan recaps Q3 planning and asks three questions.",
+            "bullets": [
+                "Jordan recaps Q3 planning across billing, onboarding and headcount.",
+                "You are asked to confirm the billing migration maintenance window.",
+                "Q4 headcount requests are due Friday, August 28th.",
+            ],
             "dates": ["Friday, August 28th"],
         })
         email = make_email(body=LONG_BODY)
 
         summary, dates = summarize.summarize(email, client=fake_client)
 
-        self.assertEqual(summary, "Jordan recaps Q3 planning and asks three questions.")
+        # The three bullets are stored newline-separated, marker-free.
+        self.assertEqual(summary.split("\n"), [
+            "Jordan recaps Q3 planning across billing, onboarding and headcount.",
+            "You are asked to confirm the billing migration maintenance window.",
+            "Q4 headcount requests are due Friday, August 28th.",
+        ])
         self.assertEqual(dates, ["Friday, August 28th"])
 
     def test_no_dates_mentioned_returns_empty_list_not_none(self):
-        fake_client = _FakeClient({"summary": "Wants to grab lunch Friday.", "dates": []})
+        fake_client = _FakeClient({"bullets": ["Lunch.", "Pat asks if you are free.", "Friday."], "dates": []})
         email = make_email(sender="pat@example.com", subject="Lunch?", body=SHORT_BODY)
 
         _, dates = summarize.summarize(email, client=fake_client)
@@ -109,7 +118,7 @@ class TestSummarize(unittest.TestCase):
         self.assertEqual(dates, [])
 
     def test_prompt_includes_sender_subject_and_body(self):
-        fake_client = _FakeClient({"summary": "Wants to grab lunch Friday.", "dates": []})
+        fake_client = _FakeClient({"bullets": ["Lunch.", "Pat asks if you are free.", "Friday."], "dates": []})
         email = make_email(sender="pat@example.com", subject="Lunch?", body=SHORT_BODY)
 
         summarize.summarize(email, client=fake_client)
@@ -141,15 +150,14 @@ class TestSummarizeBatch(unittest.TestCase):
                 "summaries": [
                     {
                         "email_id": "long1",
-                        "summary": (
-                            "Jordan recaps Q3 planning and asks infra to confirm a maintenance "
-                            "window for the billing migration, asks whether onboarding will be "
-                            "ready for the September launch, and reminds the team that Q4 "
-                            "headcount requests are due Friday, August 28th."
-                        ),
+                        "bullets": [
+                            "Jordan recaps Q3 planning for billing and onboarding.",
+                            "You are asked to confirm the billing maintenance window.",
+                            "Q4 headcount requests are due Friday, August 28th.",
+                        ],
                         "dates": ["Friday, August 28th"],
                     },
-                    {"email_id": "short1", "summary": "Pat asks if the recipient is free for lunch Friday.", "dates": []},
+                    {"email_id": "short1", "bullets": ["Lunch plans.", "Pat asks if you are free for lunch.", "Friday."], "dates": []},
                 ]
             }
         )
@@ -170,14 +178,14 @@ class TestSummarizeBatch(unittest.TestCase):
         emails = [make_email(email_id=f"e{i}") for i in range(5)]
         payloads = [
             {"summaries": [
-                {"email_id": "e0", "summary": "s0", "dates": []},
-                {"email_id": "e1", "summary": "s1", "dates": []},
+                {"email_id": "e0", "bullets": ["s0 topic", "s0 ask", "s0 deadline"], "dates": []},
+                {"email_id": "e1", "bullets": ["s1 topic", "s1 ask", "s1 deadline"], "dates": []},
             ]},
             {"summaries": [
-                {"email_id": "e2", "summary": "s2", "dates": []},
-                {"email_id": "e3", "summary": "s3", "dates": []},
+                {"email_id": "e2", "bullets": ["s2 topic", "s2 ask", "s2 deadline"], "dates": []},
+                {"email_id": "e3", "bullets": ["s3 topic", "s3 ask", "s3 deadline"], "dates": []},
             ]},
-            {"summaries": [{"email_id": "e4", "summary": "s4", "dates": []}]},
+            {"summaries": [{"email_id": "e4", "bullets": ["s4 topic", "s4 ask", "s4 deadline"], "dates": []}]},
         ]
         fake_client = _FakeClient(payloads)
 
@@ -186,7 +194,12 @@ class TestSummarizeBatch(unittest.TestCase):
         self.assertEqual(len(fake_client.messages.calls), 3)
         self.assertEqual(
             result,
-            {"e0": ("s0", []), "e1": ("s1", []), "e2": ("s2", []), "e3": ("s3", []), "e4": ("s4", [])},
+            {
+                eid: ("{0} topic\n{0} ask\n{0} deadline".format(sid), [])
+                for eid, sid in zip(
+                    ("e0", "e1", "e2", "e3", "e4"), ("s0", "s1", "s2", "s3", "s4")
+                )
+            },
         )
 
     def test_same_summary_instructions_as_single_summarize(self):
@@ -235,3 +248,34 @@ class TestTrimToSentence:
         from summarization.summarize import _trim_to_sentence
 
         assert _trim_to_sentence("   ") == ""
+
+
+class TestJoinBullets(unittest.TestCase):
+    """minItems=3 makes the shape a guarantee, which also means the model
+    must fill three slots even when it only has two things to say."""
+
+    def test_joins_with_newlines_and_no_marker(self):
+        from summarization.summarize import join_bullets
+
+        assert join_bullets(["Topic.", "The ask.", "The deadline."]) == (
+            "Topic.\nThe ask.\nThe deadline."
+        )
+
+    def test_drops_a_padding_bullet(self):
+        """A real gemma2:2b response filled the middle slot with ","."""
+        from summarization.summarize import join_bullets
+
+        assert join_bullets(["Shipment held at customs.", ",", "No deadline stated."]) == (
+            "Shipment held at customs.\nNo deadline stated."
+        )
+
+    def test_drops_whitespace_and_punctuation_only_slots(self):
+        from summarization.summarize import join_bullets
+
+        assert join_bullets(["Real content here.", "   ", "..."]) == "Real content here."
+
+    def test_empty_input_is_empty_string(self):
+        from summarization.summarize import join_bullets
+
+        assert join_bullets([]) == ""
+        assert join_bullets(None) == ""

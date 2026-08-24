@@ -26,6 +26,9 @@
   --ea-success-bg: rgba(77, 219, 155, 0.14);
   --ea-low: #8a93ad;
   --ea-low-bg: rgba(138, 147, 173, 0.14);
+
+  /* the extension icon, shared by the header mark and the Ask empty state */
+  --ea-logo-url: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+CiAgPGcgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjNGM3Y2ZhIiBzdHJva2Utd2lkdGg9IjMiPgogICAgPGVsbGlwc2UgY3g9IjMyIiBjeT0iMzIiIHJ4PSIyOCIgcnk9IjEyIi8+CiAgICA8ZWxsaXBzZSBjeD0iMzIiIGN5PSIzMiIgcng9IjI4IiByeT0iMTIiIHRyYW5zZm9ybT0icm90YXRlKDYwIDMyIDMyKSIvPgogICAgPGVsbGlwc2UgY3g9IjMyIiBjeT0iMzIiIHJ4PSIyOCIgcnk9IjEyIiB0cmFuc2Zvcm09InJvdGF0ZSgxMjAgMzIgMzIpIi8+CiAgPC9nPgogIDxjaXJjbGUgY3g9IjMyIiBjeT0iMzIiIHI9IjciIGZpbGw9IiM0YzdjZmEiLz4KICA8Y2lyY2xlIGN4PSI2MCIgY3k9IjMyIiByPSI0IiBmaWxsPSIjNmY5N2ZmIi8+CiAgPGNpcmNsZSBjeD0iMTYiIGN5PSIxNiIgcj0iNCIgZmlsbD0iIzZmOTdmZiIvPgogIDxjaXJjbGUgY3g9IjE2IiBjeT0iNDgiIHI9IjQiIGZpbGw9IiM2Zjk3ZmYiLz4KPC9zdmc+Cg==");
 }
 
 .ea-badge {
@@ -62,7 +65,7 @@
   height: 16px;
   margin-right: 6px;
   vertical-align: middle;
-  background-image: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+CiAgPGcgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjNGM3Y2ZhIiBzdHJva2Utd2lkdGg9IjMiPgogICAgPGVsbGlwc2UgY3g9IjMyIiBjeT0iMzIiIHJ4PSIyOCIgcnk9IjEyIi8+CiAgICA8ZWxsaXBzZSBjeD0iMzIiIGN5PSIzMiIgcng9IjI4IiByeT0iMTIiIHRyYW5zZm9ybT0icm90YXRlKDYwIDMyIDMyKSIvPgogICAgPGVsbGlwc2UgY3g9IjMyIiBjeT0iMzIiIHJ4PSIyOCIgcnk9IjEyIiB0cmFuc2Zvcm09InJvdGF0ZSgxMjAgMzIgMzIpIi8+CiAgPC9nPgogIDxjaXJjbGUgY3g9IjMyIiBjeT0iMzIiIHI9IjciIGZpbGw9IiM0YzdjZmEiLz4KICA8Y2lyY2xlIGN4PSI2MCIgY3k9IjMyIiByPSI0IiBmaWxsPSIjNmY5N2ZmIi8+CiAgPGNpcmNsZSBjeD0iMTYiIGN5PSIxNiIgcj0iNCIgZmlsbD0iIzZmOTdmZiIvPgogIDxjaXJjbGUgY3g9IjE2IiBjeT0iNDgiIHI9IjQiIGZpbGw9IiM2Zjk3ZmYiLz4KPC9zdmc+Cg==");
+  background-image: var(--ea-logo-url);
   background-size: contain;
   background-repeat: no-repeat;
 }
@@ -335,10 +338,10 @@
 
 /* ---- Ask tab ---- */
 
-.ea-panel-ask { display: flex; flex-direction: column; min-height: 0; padding: 10px 12px 12px; max-height: 55vh; }
+.ea-panel-ask { display: flex; flex-direction: column; min-height: 340px; padding: 10px 12px 12px; max-height: 55vh; }
 .ea-collapsed .ea-panel-ask { display: none; }
 
-.ea-ask-list { overflow-y: auto; flex: 1; margin-bottom: 8px; }
+.ea-ask-list { overflow-y: auto; flex: 1; min-height: 0; margin-bottom: 10px; }
 
 .ea-ask-msg { margin-bottom: 10px; }
 .ea-ask-msg-text { white-space: pre-wrap; }
@@ -398,21 +401,81 @@
 
 .ea-ask-source-link:hover { text-decoration: underline; }
 
-.ea-ask-bar { display: flex; gap: 6px; }
+/* Empty state: the mark, haloed, above the greeting -- centered in whatever
+   height the list has left, so the composer stays pinned to the bottom. */
+.ea-ask-empty {
+  height: 100%;
+  min-height: 240px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  padding: 0 14px;
+  text-align: center;
+}
+
+.ea-ask-empty-mark {
+  width: 64px;
+  height: 64px;
+  background-image: var(--ea-logo-url);
+  background-size: contain;
+  background-repeat: no-repeat;
+  background-position: center;
+  /* the glow behind the mark -- two soft accent rings, no extra element */
+  border-radius: 50%;
+  box-shadow:
+    0 0 24px 6px rgba(76, 124, 250, 0.22),
+    0 0 60px 18px rgba(76, 124, 250, 0.12);
+}
+
+.ea-ask-empty-text {
+  font: 400 14px/1.6 Roboto, Arial, sans-serif;
+  color: var(--ea-text);
+  max-width: 280px;
+}
+
+/* Composer: one rounded field with the Send button riding inside it. */
+.ea-ask-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 6px 6px 12px;
+  background: var(--ea-surface);
+  border: 1px solid var(--ea-border);
+  border-radius: 14px;
+}
+
+.ea-ask-bar:focus-within { border-color: var(--ea-accent); }
 
 .ea-ask-input {
   flex: 1;
-  padding: 6px 8px;
-  border: 1px solid var(--ea-border);
-  border-radius: 6px;
-  font: 12px Roboto, Arial, sans-serif;
+  min-width: 0;
+  padding: 6px 0;
+  border: none;
+  outline: none;
+  font: 13px Roboto, Arial, sans-serif;
   /* background is explicit: the UA default is white, which would leave
      light --ea-text unreadable on the dark panel. */
-  background: var(--ea-surface-2);
+  background: transparent;
   color: var(--ea-text);
 }
 
-.ea-ask-input:disabled { background: var(--ea-surface); color: var(--ea-low); }
+.ea-ask-input::placeholder { color: var(--ea-text-muted); }
+.ea-ask-input:disabled { color: var(--ea-low); }
+
+.ea-ask-bar .ea-button {
+  margin-top: 0;
+  padding: 7px 16px;
+  border: none;
+  border-radius: 10px;
+  background: var(--ea-accent);
+  color: #fff;
+  font: 600 13px Roboto, Arial, sans-serif;
+}
+
+.ea-ask-bar .ea-button:hover { background: var(--ea-accent-strong); }
+.ea-ask-bar .ea-button:disabled { background: var(--ea-surface-2); color: var(--ea-text-muted); }
 
 /* ---- calendar tab ---- */
 
@@ -537,3 +600,19 @@
   white-space: nowrap;
   max-width: 100%;
 }
+
+/* Three-bullet summaries (summarization/summarize.py::join_bullets). Tight
+   leading and a small marker so three facts read as a glanceable block
+   rather than a paragraph broken into pieces. */
+.ea-summary-list {
+  margin: 0;
+  padding-left: 1.1em;
+  list-style: disc;
+}
+.ea-summary-list li {
+  font-size: 13px;
+  line-height: 1.45;
+  margin: 0 0 3px 0;
+  color: var(--ea-text, #202124);
+}
+.ea-summary-list li:last-child { margin-bottom: 0; }
