@@ -230,47 +230,31 @@ export const api = {
       throw new Error('This email has no outline to expand.');
     }
 
-    // Try backend if available
+    // An LLM call routinely takes longer than a couple seconds, so give it
+    // real headroom rather than timing out into the offline fallback below.
     try {
       const res = await fetch(`${BASE_URL}/emails/${emailId}/expand`, {
         method: 'POST',
-        signal: AbortSignal.timeout(2000),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tone }),
+        signal: AbortSignal.timeout(30000),
       });
       if (res.ok) {
         const data = await res.json();
         if (data.draft) return data.draft;
       }
-    } catch {
-      // Continue to intelligent client-side generation
+      // Backend reachable but errored (not just unavailable): surface the
+      // real failure rather than inventing a reply that never read the email.
+      throw new Error(`Backend returned ${res.status} expanding this draft.`);
+    } catch (err) {
+      // Backend genuinely unreachable (offline/demo mode): fall back to the
+      // static mock draft rather than either failing the demo or fabricating
+      // new "AI" text client-side.
+      if (!(await this.isBackendAvailable()) && email.replyDraft) {
+        return email.replyDraft;
+      }
+      throw err instanceof Error ? err : new Error('Failed to expand this draft.');
     }
-
-    // High quality intelligent draft expansion based on outline bullets & tone
-    const senderName = email.sender.split('@')[0].replace('.', ' ');
-    const formattedSender = senderName.charAt(0).toUpperCase() + senderName.slice(1);
-
-    const greeting = tone === 'direct' ? `Hi ${formattedSender},` : tone === 'warm' ? `Hi ${formattedSender},\n\nHope you're having a wonderful week!` : `Dear ${formattedSender},`;
-    
-    const bodyParagraphs = email.replyOutline.map((bullet) => {
-      if (bullet.toLowerCase().includes('acknowledge') || bullet.toLowerCase().includes('thank')) {
-        return tone === 'concise'
-          ? `Thanks for reaching out and sharing this update.`
-          : `Thank you for reaching out and sharing the latest updates. We really appreciate your collaboration on this.`;
-      }
-      if (bullet.toLowerCase().includes('calendar') || bullet.toLowerCase().includes('pm') || bullet.toLowerCase().includes('am') || bullet.toLowerCase().includes('availab')) {
-        return `Regarding scheduling, I've checked my calendar and can confirm availability for the suggested slots (${bullet.replace(/.*confirm you can make /i, '').replace(/\(per calendar.*\)/i, '').trim()}). Please let me know which time suits you best.`;
-      }
-      if (bullet.toLowerCase().includes('review') || bullet.toLowerCase().includes('feedback')) {
-        return `I will thoroughly review the materials and provide comprehensive feedback ahead of the upcoming deadline.`;
-      }
-      if (bullet.toLowerCase().includes('failover') || bullet.toLowerCase().includes('incident') || bullet.toLowerCase().includes('approv')) {
-        return `I approve the emergency routing and failover procedure immediately. Let's keep the war room channel actively updated.`;
-      }
-      return `${bullet.charAt(0).toUpperCase() + bullet.slice(1)}.`;
-    }).join('\n\n');
-
-    const signoff = tone === 'concise' ? 'Best,\nValence User' : tone === 'warm' ? 'Warm regards,\nValence User' : tone === 'direct' ? 'Thanks,\nValence User' : 'Sincerely,\nValence User';
-
-    return `${greeting}\n\n${bodyParagraphs}\n\n${signoff}`;
   },
 
   async getTodos(): Promise<{ total: number; todos: TodoItem[] }> {

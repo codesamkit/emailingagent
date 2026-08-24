@@ -178,6 +178,8 @@ class ProcessedEmail:
     # Track C — drafting (drafting/outline.py)
     reply_outline: Optional[list[str]] = None
     reply_outline_status: ReplyOutlineStatus = ReplyOutlineStatus.NONE
+    # Track C — full draft, auto-expanded from reply_outline (drafting/expand.py)
+    reply_draft: Optional[str] = None
 
     # Pipeline bookkeeping (pipeline/orchestrate.py) — set each time this
     # record is (re)processed; supports incremental re-run and debugging.

@@ -8,6 +8,7 @@ import {
   Clock,
   Sparkles,
   Circle,
+  FileText,
 } from 'lucide-react';
 
 interface EmailListItemProps {
@@ -126,6 +127,14 @@ export const EmailListItem: React.FC<EmailListItemProps> = ({
           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-700 border border-indigo-200 font-medium">
             <Sparkles className="w-3 h-3 text-indigo-600" />
             Outline Ready ({email.replyOutline.length})
+          </span>
+        )}
+
+        {/* Draft Status */}
+        {email.replyDraft && (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 border border-emerald-200 font-medium">
+            <FileText className="w-3 h-3 text-emerald-600" />
+            Draft Ready
           </span>
         )}
 

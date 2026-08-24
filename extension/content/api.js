@@ -87,7 +87,6 @@ const EmailAgent = (() => {
       if (result?.ok) await refreshIndex();
       return result;
     },
-    expandDraft: (emailId) => call(`/api/emails/${encodeURIComponent(emailId)}/expand`, "POST"),
     // To-do list: extracted action items + "needs a reply" markers.
     getTodos: () => call("/api/todos"),
     completeTodo: (todoId) => call(`/api/todos/${encodeURIComponent(todoId)}/complete`, "POST"),

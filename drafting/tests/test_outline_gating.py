@@ -92,29 +92,28 @@ def raw(**overrides) -> RawEmail:
     return RawEmail(**defaults)
 
 
-class TestUnreadIsNeverDrafted:
-    def test_returns_none_and_status_none(self):
-        result, status = generate_reply_outline(
-            processed(read_status=ReadStatus.UNREAD), raw(), client=ExplodingClient()
-        )
-        assert result is None
-        assert status == ReplyOutlineStatus.NONE
+class TestUnreadIsDraftedTheSameAsRead:
+    """The reply is prepared the moment an email arrives and clears
+    classification — not held back until the user opens it."""
 
-    def test_no_llm_call_is_made(self):
-        """Not just a null result — the client must never be touched."""
-        client = FakeClient()
-        generate_reply_outline(
+    def test_unread_email_still_generates_bullets(self):
+        client = FakeClient(["Confirm the Q3 figures"])
+        bullets, status = generate_reply_outline(
             processed(read_status=ReadStatus.UNREAD), raw(), client=client
         )
-        assert client.calls == []
+        assert bullets == ["Confirm the Q3 figures"]
+        assert status == ReplyOutlineStatus.SUGGESTED
+        assert len(client.calls) == 1
 
-    def test_unread_wins_even_when_scheduling_related(self):
-        result, status = generate_reply_outline(
+    def test_unread_scheduling_email_also_generates_bullets(self):
+        client = FakeClient(["Acknowledge the meeting request"])
+        bullets, status = generate_reply_outline(
             processed(read_status=ReadStatus.UNREAD, is_scheduling_related=True),
             raw(),
-            client=ExplodingClient(),
+            client=client,
         )
-        assert (result, status) == (None, ReplyOutlineStatus.NONE)
+        assert "Acknowledge the meeting request" in bullets
+        assert status == ReplyOutlineStatus.SUGGESTED
 
 
 class TestNoReplyIsNeverDrafted:
@@ -130,8 +129,9 @@ class TestNoReplyIsNeverDrafted:
         generate_reply_outline(processed(is_no_reply=True), raw(), client=client)
         assert client.calls == []
 
-    def test_no_reply_beats_read_status(self):
-        """A read no-reply email is still never drafted."""
+    def test_no_reply_blocks_regardless_of_read_status(self):
+        """A read no-reply email is still never drafted — read status has no
+        bearing on the no-reply gate either way."""
         _, status = generate_reply_outline(
             processed(read_status=ReadStatus.READ, is_no_reply=True),
             raw(),
@@ -273,10 +273,11 @@ class TestIsEligible:
         "kwargs,expected",
         [
             (dict(), True),
-            (dict(read_status=ReadStatus.UNREAD), False),
+            (dict(read_status=ReadStatus.UNREAD), True),
             (dict(is_no_reply=True), False),
             (dict(is_no_reply=None), False),
             (dict(is_no_reply=True, read_status=ReadStatus.UNREAD), False),
+            (dict(is_no_reply=None, read_status=ReadStatus.UNREAD), False),
         ],
     )
     def test_eligibility_matrix(self, kwargs, expected):
@@ -325,3 +326,30 @@ class TestExpand:
         with pytest.raises(NotYetImplementedError) as exc:
             expand_outline_to_full_draft("e1")
         assert "not implemented yet" in str(exc.value)
+
+    def test_default_tone_is_professional(self):
+        from drafting.expand import _TONE_INSTRUCTIONS, expand_outline_to_full_draft
+
+        fake = ExpandFakeClient()
+        expand_outline_to_full_draft("e1", ["Confirm the Friday deadline"], client=fake)
+
+        assert _TONE_INSTRUCTIONS["professional"] in fake.calls[0]["system"]
+
+    @pytest.mark.parametrize("tone", ["concise", "direct", "warm"])
+    def test_tone_changes_the_system_prompt(self, tone):
+        from drafting.expand import _TONE_INSTRUCTIONS, expand_outline_to_full_draft
+
+        fake = ExpandFakeClient()
+        expand_outline_to_full_draft("e1", ["Confirm the Friday deadline"], client=fake, tone=tone)
+
+        assert _TONE_INSTRUCTIONS[tone] in fake.calls[0]["system"]
+
+    def test_unknown_tone_falls_back_to_default_rather_than_erroring(self):
+        from drafting.expand import DEFAULT_TONE, _TONE_INSTRUCTIONS, expand_outline_to_full_draft
+
+        fake = ExpandFakeClient()
+        expand_outline_to_full_draft(
+            "e1", ["Confirm the Friday deadline"], client=fake, tone="sarcastic"
+        )
+
+        assert _TONE_INSTRUCTIONS[DEFAULT_TONE] in fake.calls[0]["system"]

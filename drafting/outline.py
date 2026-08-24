@@ -1,12 +1,16 @@
 """Reply-outline generation, with a hard code-level eligibility gate.
 
-The gate is the point of this module. `read_status` and `is_no_reply` are
-checked with plain `if` statements *before* any LLM client is touched — not
-by telling a model to skip ineligible emails. A prompt instruction can drift,
-be overridden by a cleverly worded email, or simply be ignored; an `if`
-cannot. See CONTEXT.md's design rationale and interfaces/README.md's gating
-note, which requires tests to assert the client is never invoked rather than
-merely that the output is None.
+The gate is the point of this module. `is_no_reply` is checked with a plain
+`if` statement *before* any LLM client is touched — not by telling a model to
+skip ineligible emails. A prompt instruction can drift, be overridden by a
+cleverly worded email, or simply be ignored; an `if` cannot. Drafting does
+NOT wait for the email to be read: a reply is prepared the moment an email
+arrives and classification clears it as a real correspondent, so it's ready
+before the user ever opens the message — the one thing still withheld
+unconditionally is a no-reply/automated sender. See CONTEXT.md's design
+rationale and interfaces/README.md's gating note, which requires tests to
+assert the client is never invoked rather than merely that the output is
+None.
 """
 
 from __future__ import annotations
@@ -19,7 +23,6 @@ from models.schema import (
     ContextPack,
     ProcessedEmail,
     RawEmail,
-    ReadStatus,
     ReplyOutlineStatus,
 )
 
@@ -76,9 +79,10 @@ def is_eligible(processed: ProcessedEmail) -> Tuple[bool, ReplyOutlineStatus]:
     """Whether this email may receive a reply outline, and the status if not.
 
     Pure and side-effect free so the gate can be tested, reused by the
-    pipeline's incremental re-run, and read at a glance:
+    pipeline's incremental re-run, and read at a glance. Deliberately blind
+    to read status — a reply is prepared as soon as an email arrives and
+    classification clears it, not held back until the user opens it:
 
-      - unread          -> never drafted yet; may become eligible when read
       - no-reply        -> never drafted, regardless of read status
       - unclassified    -> not eligible; classification has to run first,
                            otherwise a no-reply email would slip through while
@@ -87,9 +91,6 @@ def is_eligible(processed: ProcessedEmail) -> Tuple[bool, ReplyOutlineStatus]:
     if processed.is_no_reply:
         log.debug("email_id=%s: not eligible (no-reply)", processed.email_id)
         return False, ReplyOutlineStatus.NOT_APPLICABLE
-    if processed.read_status != ReadStatus.READ:
-        log.debug("email_id=%s: not eligible (unread)", processed.email_id)
-        return False, ReplyOutlineStatus.NONE
     if processed.is_no_reply is None:
         # Unclassified: treat as ineligible rather than assume it is safe.
         log.debug("email_id=%s: not eligible (unclassified)", processed.email_id)
@@ -142,8 +143,8 @@ def generate_reply_outline(
     """Generate reply-outline bullets for an eligible email.
 
     Matches the frozen signature in interfaces/README.md:
-      - read_status != READ  -> (None, ReplyOutlineStatus.NONE)
       - is_no_reply == True  -> (None, ReplyOutlineStatus.NOT_APPLICABLE)
+      - is_no_reply is None  -> (None, ReplyOutlineStatus.NONE) — unclassified
       - else                 -> (bullets, ReplyOutlineStatus.SUGGESTED)
 
     The eligibility check happens before `client` is resolved, so an

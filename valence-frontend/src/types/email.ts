@@ -48,6 +48,7 @@ export interface EmailItem {
   calendarContext?: CalendarContext | null;
   replyOutline: string[] | null;
   replyOutlineStatus: ReplyOutlineStatus;
+  replyDraft: string | null;
   outlineEligible: boolean;
   processedAt: string | null;
   body?: string;

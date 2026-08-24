@@ -104,10 +104,12 @@ def test_empty_context_pack_adds_nothing():
 
 
 def test_ineligible_email_still_makes_no_call_with_context_present():
+    """Drafting eligibility no longer depends on read status — a no-reply
+    sender is the ineligible case here, not an unread one."""
     from drafting.tests.test_outline_gating import ExplodingClient
 
     result, status = generate_reply_outline(
-        processed(read_status=ReadStatus.UNREAD),
+        processed(is_no_reply=True),
         raw(),
         client=ExplodingClient(),
         context=_pack(),

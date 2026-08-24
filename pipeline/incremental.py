@@ -1,20 +1,21 @@
 """Deciding what actually needs reprocessing.
 
-Reprocessing 100 emails because one was marked read costs ~100x more in LLM
-calls than it should. This module answers two questions: does this email need
-work at all, and if so, which stages.
+Reprocessing 100 emails because a field is still missing costs ~100x more in
+LLM calls than it should. This module answers two questions: does this email
+need work at all, and if so, which stages.
 
-The interesting case is the read-status flip. When an unread email becomes
-read it becomes eligible for a reply outline — but its summary, score, and
-classification are all still valid, because none of them depend on read
-status. So the correct response is to re-run `outline` alone.
+Drafting eligibility (drafting.outline.is_eligible) doesn't depend on read
+status — a reply is prepared as soon as an email arrives, not when the user
+opens it — so a read/unread flip alone triggers nothing here. A stage is due
+purely because its output is still missing (or the calendar/propose_event
+chain it feeds).
 """
 
 from __future__ import annotations
 
 from typing import AbstractSet, Dict, List, Mapping, Optional, Sequence, Tuple
 
-from models.schema import ProcessedEmail, ProposedEventStatus, RawEmail, ReadStatus
+from models.schema import ProcessedEmail, ProposedEventStatus, RawEmail
 
 from .orchestrate import ALL_STAGE_NAMES, CONTEXT_STAGES
 
@@ -111,15 +112,18 @@ def stages_for(
         # rather than treating "summary is set" as "fully summarized".
         due.append("summarize")
 
-    read_flipped = ReadStatus(raw.read_status) != ReadStatus(existing.read_status)
-    if read_flipped:
-        # Only eligibility changed. Classification, score, and summary are
-        # unaffected by whether the user has opened the message — and
-        # neither is the context graph: the body didn't change, so
-        # chunk/embed/extract must NOT be appended here, only "outline".
+    # Drafting eligibility no longer depends on read status (is_eligible is
+    # read-status-blind), so a read/unread flip alone has nothing to
+    # trigger here — it doesn't touch classification, score, summary, the
+    # context graph, or outline eligibility. read_status itself still
+    # refreshes every run regardless (Pipeline.process_one does that
+    # unconditionally); only outline generation is gated, and only by
+    # whether it's still actually missing.
+    if _outline_missing(existing):
         due.append("outline")
-    elif _outline_missing(existing):
-        due.append("outline")
+
+    if "outline" in due or _draft_missing(existing):
+        due.append("expand")
 
     if "scheduling" in due or (existing.is_scheduling_related and existing.calendar_context is None):
         due.append("calendar")
@@ -149,6 +153,19 @@ def _outline_missing(existing: ProcessedEmail) -> bool:
 
     eligible, _ = is_eligible(existing)
     return eligible and not existing.reply_outline
+
+
+def _draft_missing(existing: ProcessedEmail) -> bool:
+    """Whether an eligible email has an outline but still needs its draft.
+
+    Mirrors _outline_missing: an unread/no-reply email has no outline (and
+    so no draft) by design, and re-running "expand" for it forever would be
+    the same bug _outline_missing avoids.
+    """
+    from drafting.outline import is_eligible
+
+    eligible, _ = is_eligible(existing)
+    return eligible and bool(existing.reply_outline) and not existing.reply_draft
 
 
 def plan(

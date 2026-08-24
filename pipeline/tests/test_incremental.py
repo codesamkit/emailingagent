@@ -31,7 +31,13 @@ def raw(email_id="e1", read_status=ReadStatus.UNREAD) -> RawEmail:
 
 
 def complete(email_id="e1", read_status=ReadStatus.UNREAD, **overrides) -> ProcessedEmail:
-    """A fully processed record — every stage has run."""
+    """A fully processed record — every stage has run.
+
+    read_status defaults to UNREAD deliberately: drafting eligibility no
+    longer depends on it (drafting.outline.is_eligible is read-status-blind),
+    so a "complete" record has its outline and draft regardless of whether
+    it's been opened.
+    """
     defaults = dict(
         email_id=email_id, thread_id="t1", sender="a@b.example", subject="Hi",
         received_at=NOW, read_status=read_status,
@@ -43,8 +49,9 @@ def complete(email_id="e1", read_status=ReadStatus.UNREAD, **overrides) -> Proce
         action_items=[],
         category="team planning",
         is_scheduling_related=False,
-        reply_outline=None,
-        reply_outline_status=ReplyOutlineStatus.NONE,
+        reply_outline=["Confirm the details"],
+        reply_outline_status=ReplyOutlineStatus.SUGGESTED,
+        reply_draft="Hi,\n\nConfirmed.\n\nBest,",
         processed_at=NOW,
         context_processed_at=NOW,
     )
@@ -86,12 +93,15 @@ class TestFirstRun:
 
 
 class TestReadStatusFlip:
-    def test_becoming_read_reruns_only_the_outline(self):
-        """The headline case. Classification, score, and summary do not depend
-        on read status, so re-running them would be pure waste."""
+    """Drafting eligibility doesn't depend on read status (drafting.outline.
+    is_eligible is read-status-blind), so a flip alone — nothing else
+    changed — has nothing to trigger: outline/expand already ran when the
+    email arrived, whichever way its read status happened to be at the time."""
+
+    def test_becoming_read_reruns_nothing_when_already_complete(self):
         was_unread = complete(read_status=ReadStatus.UNREAD)
         now_read = raw(read_status=ReadStatus.READ)
-        assert incremental.stages_for(now_read, was_unread) == ("outline",)
+        assert incremental.stages_for(now_read, was_unread) == ()
 
     def test_flip_does_not_touch_other_emails(self):
         raws = [raw("e1", ReadStatus.READ), raw("e2"), raw("e3")]
@@ -100,21 +110,20 @@ class TestReadStatusFlip:
             "e2": complete("e2"),
             "e3": complete("e3"),
         }
-        plan = incremental.plan(raws, existing)
-        assert plan == {"e1": ("outline",)}
+        assert incremental.plan(raws, existing) == {}
 
-    def test_becoming_unread_again_also_reruns_outline(self):
+    def test_becoming_unread_again_reruns_nothing_either(self):
         was_read = complete(read_status=ReadStatus.READ,
                             reply_outline=["a"], reply_outline_status=ReplyOutlineStatus.SUGGESTED)
-        assert incremental.stages_for(raw(read_status=ReadStatus.UNREAD), was_read) == ("outline",)
+        assert incremental.stages_for(raw(read_status=ReadStatus.UNREAD), was_read) == ()
 
 
-class TestReadStatusFlipReprocessing:
-    """The planned 'outline' stage must actually clear a stale outline when
-    it re-runs — the schema's invariant is that reply_outline is non-None
-    only when read_status == READ, even for a user-EDITED outline."""
+class TestReadStatusFlipDoesNotTouchTheOutline:
+    """The opposite of the old invariant: marking an email unread again must
+    NOT clear or regenerate its already-generated outline/draft — read
+    status carries no meaning for drafting any more."""
 
-    def test_becoming_unread_clears_even_an_edited_outline(self):
+    def test_becoming_unread_keeps_an_edited_outline(self):
         from drafting.outline import generate_reply_outline
         from pipeline.orchestrate import Pipeline
 
@@ -129,10 +138,11 @@ class TestReadStatusFlipReprocessing:
         pipeline = Pipeline(outline=generate_reply_outline, stages=stages)
         result = pipeline.process_one(now_unread, existing=existing, now=NOW)
 
-        assert result.reply_outline is None
-        assert result.reply_outline_status == ReplyOutlineStatus.NONE
+        assert result.reply_outline == ["User's own edited bullet"]
+        assert result.reply_outline_status == ReplyOutlineStatus.EDITED
+        assert result.read_status == ReadStatus.UNREAD
 
-    def test_reprocessing_the_same_change_twice_is_idempotent(self):
+    def test_reprocessing_the_same_flip_twice_is_idempotent(self):
         from drafting.outline import generate_reply_outline
         from pipeline.orchestrate import Pipeline
 
@@ -147,8 +157,8 @@ class TestReadStatusFlipReprocessing:
         first = pipeline.process_one(now_unread, existing=existing, now=NOW)
         second = pipeline.process_one(now_unread, existing=first, now=NOW)
 
-        assert first.reply_outline is None and second.reply_outline is None
-        assert first.reply_outline_status == second.reply_outline_status == ReplyOutlineStatus.NONE
+        assert first.reply_outline == second.reply_outline == ["User's own edited bullet"]
+        assert first.reply_outline_status == second.reply_outline_status == ReplyOutlineStatus.EDITED
 
 
 class TestPartialRecords:
@@ -180,6 +190,12 @@ class TestPartialRecords:
     def test_eligible_email_missing_its_outline_is_retried(self):
         record = complete(read_status=ReadStatus.READ, is_no_reply=False, reply_outline=None)
         assert "outline" in incremental.stages_for(raw(read_status=ReadStatus.READ), record)
+
+    def test_unread_but_eligible_email_missing_its_outline_is_also_retried(self):
+        """Read status has no bearing on eligibility — an unread real email
+        missing its outline is retried exactly like a read one."""
+        record = complete(read_status=ReadStatus.UNREAD, is_no_reply=False, reply_outline=None)
+        assert "outline" in incremental.stages_for(raw(read_status=ReadStatus.UNREAD), record)
 
     def test_scheduling_email_without_context_refetches_calendar(self):
         record = complete(is_scheduling_related=True, calendar_context=None)
@@ -231,16 +247,17 @@ class TestContextPass:
         now_read = raw(read_status=ReadStatus.READ)
         stages = incremental.stages_for(now_read, was_unread)
         assert "chunk" not in stages and "embed" not in stages and "extract" not in stages
-        assert stages == ("outline",)
+        # Nothing else is due either: complete() already carries an outline
+        # and draft, and a flip alone no longer invalidates either.
+        assert stages == ()
 
     def test_missing_context_pass_and_read_flip_together(self):
-        """Both due at once: context pass because it's missing, outline
-        because of the flip — not because the flip touched the context
-        pass too."""
+        """The context pass is due because it's missing — not because of the
+        flip, which by itself triggers nothing now."""
         was_unread = complete(context_processed_at=None, read_status=ReadStatus.UNREAD)
         now_read = raw(read_status=ReadStatus.READ)
         stages = incremental.stages_for(now_read, was_unread)
-        assert stages == ("chunk", "embed", "extract", "outline")
+        assert stages == ("chunk", "embed", "extract")
 
 
 class TestSummarizePlan:

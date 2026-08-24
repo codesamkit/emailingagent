@@ -40,8 +40,24 @@ def get_client(stage: Optional[str] = None, provider: Optional[str] = None) -> A
         return OllamaClient(model=config.model_for(stage, provider))
 
     if provider == config.ANTHROPIC:
+        import os
+
         import anthropic
 
+        # anthropic.Anthropic() itself does no credential check — the SDK
+        # only discovers there's no key deep inside the first .create() call,
+        # as a bare TypeError from header-building. That's late enough that
+        # every direct call site (the /expand endpoint, the agent's
+        # draft_reply tool) turned it into an unhandled 500 instead of a
+        # clear error, unlike every other "this integration isn't configured"
+        # case in the app (see api/main.py's Gmail/Calendar auth handling).
+        # Checking here, once, fails fast with a message a caller can catch.
+        if not (os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN")):
+            raise RuntimeError(
+                "ANTHROPIC_API_KEY is not set, so the Anthropic provider has "
+                "no way to authenticate. Set it (or ANTHROPIC_AUTH_TOKEN), or "
+                "point LLM_PROVIDER at a different backend — see llm/README.md."
+            )
         return anthropic.Anthropic()
 
     raise UnknownProviderError(

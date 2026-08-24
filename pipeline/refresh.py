@@ -216,10 +216,13 @@ def rescore_sender(sender: str, db_path: Optional[Path] = None) -> int:
 def refresh_one(email_id: str, db_path: Optional[Path] = None):
     """Re-fetch a single message from Gmail and run whatever stages it needs.
 
-    The fast path behind the extension's open-email view: when the user opens
-    a message, Gmail flips it to read, and this picks up the flip (unlocking
-    the reply outline) in seconds instead of waiting for the next full
-    refresh. Also handles brand-new mail the bulk ingest hasn't seen.
+    The fast path for brand-new mail the bulk ingest hasn't seen yet, and a
+    safety net that re-syncs one message's read status on demand. Drafting
+    no longer waits on read status (drafting.outline.is_eligible is
+    read-status-blind — see pipeline/incremental.py), so this runs every
+    stage stages_for plans, expand included: mail caught by this live path
+    gets its full draft immediately rather than a bullet list now and a
+    draft two minutes later on the next bulk /api/refresh poll.
 
     Raises googleapiclient.errors.HttpError (404) for an unknown message id
     and RuntimeError when Gmail auth is unavailable non-interactively.

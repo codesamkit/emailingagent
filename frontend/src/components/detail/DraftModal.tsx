@@ -18,7 +18,16 @@ export const DraftModal: React.FC<DraftModalProps> = ({ isOpen, onClose, email }
   const [copied, setCopied] = useState(false);
 
   React.useEffect(() => {
-    if (isOpen && email) generateDraft(tone);
+    if (!isOpen || !email) return;
+    // The pipeline already auto-generates a professional-tone draft for
+    // every eligible email — show it instantly instead of re-running the
+    // LLM call just to open the modal. Switching tone still regenerates.
+    if (tone === 'professional' && email.replyDraft) {
+      setDraftContent(email.replyDraft);
+      setIsGenerating(false);
+      return;
+    }
+    generateDraft(tone);
   }, [isOpen, email?.emailId, tone]);
 
   const generateDraft = async (selectedTone: 'professional' | 'concise' | 'direct' | 'warm') => {

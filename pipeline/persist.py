@@ -34,8 +34,8 @@ INSERT INTO processed_email (
     importance_score, importance_level, importance_justification,
     summary, mentioned_dates, action_items, category, is_scheduling_related, calendar_context,
     proposed_event, proposed_event_status,
-    reply_outline, reply_outline_status, processed_at, context_processed_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    reply_outline, reply_outline_status, reply_draft, processed_at, context_processed_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(email_id) DO UPDATE SET
     thread_id                = excluded.thread_id,
     sender                   = excluded.sender,
@@ -57,6 +57,7 @@ ON CONFLICT(email_id) DO UPDATE SET
     proposed_event_status    = excluded.proposed_event_status,
     reply_outline            = excluded.reply_outline,
     reply_outline_status     = excluded.reply_outline_status,
+    reply_draft              = excluded.reply_draft,
     processed_at             = excluded.processed_at,
     context_processed_at     = excluded.context_processed_at
 """
@@ -197,6 +198,7 @@ def _to_row(email: ProcessedEmail, processed_at: Optional[datetime]) -> tuple:
         ProposedEventStatus(email.proposed_event_status).value,
         json.dumps(email.reply_outline) if email.reply_outline is not None else None,
         ReplyOutlineStatus(email.reply_outline_status).value,
+        email.reply_draft,
         _dt(processed_at if processed_at is not None else email.processed_at),
         _dt(email.context_processed_at),
     )
@@ -235,6 +237,7 @@ def _row_to_email(row: sqlite3.Row) -> ProcessedEmail:
         proposed_event_status=ProposedEventStatus(row["proposed_event_status"]),
         reply_outline=json.loads(row["reply_outline"]) if row["reply_outline"] else None,
         reply_outline_status=ReplyOutlineStatus(row["reply_outline_status"]),
+        reply_draft=row["reply_draft"],
         processed_at=(
             datetime.fromisoformat(row["processed_at"]) if row["processed_at"] else None
         ),
@@ -327,6 +330,26 @@ def update_outline(
                 ReplyOutlineStatus(status).value,
                 email_id,
             ),
+        )
+        conn.commit()
+        return cursor.rowcount > 0
+
+
+def update_draft(
+    email_id: str,
+    draft: str,
+    db_path: Optional[Path] = None,
+) -> bool:
+    """Save a (re)generated full draft. Returns False if the email is unknown.
+
+    Used by the API's manual expand/regenerate endpoint — the pipeline's own
+    "expand" stage writes reply_draft as part of the normal upsert instead.
+    """
+    with db.connect(db_path) as conn:
+        _prepare(conn)
+        cursor = conn.execute(
+            "UPDATE processed_email SET reply_draft = ? WHERE email_id = ?",
+            (draft, email_id),
         )
         conn.commit()
         return cursor.rowcount > 0
