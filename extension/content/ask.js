@@ -87,6 +87,9 @@ const EmailAgentAsk = (() => {
   function send() {
     const message = inputEl.value.trim();
     if (!message || streaming) return;
+    // The empty state is the greeting; the first real turn replaces it.
+    const empty = listEl.querySelector(".ea-ask-empty");
+    if (empty) empty.remove();
     inputEl.value = "";
     addMessage("user", message);
     setStreaming(true);
@@ -133,10 +136,19 @@ const EmailAgentAsk = (() => {
 
     listEl = el("div", "ea-ask-list");
     container.appendChild(listEl);
-    addMessage(
-      "assistant",
-      "Ask me about your mailbox — “what's still open with Henderson”, “anything urgent today”, “draft a reply to Alex”."
+
+    // Empty state: the logo mark over the greeting, centered in the pane —
+    // shown until the first message, then removed by send().
+    const empty = el("div", "ea-ask-empty");
+    empty.appendChild(el("div", "ea-ask-empty-mark"));
+    empty.appendChild(
+      el(
+        "div",
+        "ea-ask-empty-text",
+        "Ask me about your mailbox — “what's still open with Henderson”, “anything urgent today”, “draft a reply to Alex”."
+      )
     );
+    listEl.appendChild(empty);
 
     const bar = el("div", "ea-ask-bar");
     inputEl = document.createElement("input");
