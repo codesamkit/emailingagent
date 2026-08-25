@@ -86,6 +86,12 @@ def ingest_new(
     return store.upsert_emails(emails, db_path)
 
 
+# Emails per DB write inside a run. Small enough that the UI sees progress
+# within a minute or so on a local model, large enough that the write itself
+# stays amortized.
+PERSIST_CHUNK = 5
+
+
 def process_incremental(
     db_path: Optional[Path] = None,
     limit: Optional[int] = None,
@@ -155,8 +161,17 @@ def process_incremental(
             if on_progress
             else None
         )
-        results = pipeline.process(batch, existing=existing, on_progress=progress)
-        written += persist.upsert(results, db_path)
+        # Persist in chunks rather than once at the end of the batch. A run
+        # over 65 new emails takes tens of minutes on a local model, and
+        # writing only at the end meant the UI showed no scores at all for
+        # the whole run — indistinguishable from a hang — and any
+        # interruption threw away every completed email. Chunking bounds
+        # both: progress becomes visible, and a killed run keeps what it
+        # finished.
+        for start in range(0, len(batch), PERSIST_CHUNK):
+            slice_ = batch[start : start + PERSIST_CHUNK]
+            results = pipeline.process(slice_, existing=existing, on_progress=progress)
+            written += persist.upsert(results, db_path)
         errors.extend(pipeline.errors)
 
     result["written"] = written

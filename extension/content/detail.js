@@ -151,7 +151,17 @@
 
     if (email.summary) {
       const sec = section("Summary");
-      sec.appendChild(el("p", "ea-text", email.summary));
+      // Summaries are three newline-separated bullets (see
+      // summarization/summarize.py::join_bullets). Render them as a list
+      // rather than one paragraph so the reader can scan the three facts.
+      const lines = email.summary.split("\n").map((l) => l.trim()).filter(Boolean);
+      if (lines.length > 1) {
+        const ul = el("ul", "ea-summary-list");
+        for (const line of lines) ul.appendChild(el("li", null, line));
+        sec.appendChild(ul);
+      } else {
+        sec.appendChild(el("p", "ea-text", email.summary));
+      }
       body.appendChild(sec);
     }
 

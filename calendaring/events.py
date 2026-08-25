@@ -30,6 +30,7 @@ from __future__ import annotations
 import logging
 from dataclasses import replace
 from datetime import datetime
+from enum import Enum
 from typing import Any, Dict, Optional, Sequence
 
 from googleapiclient.errors import HttpError
@@ -41,6 +42,64 @@ from .retry import with_retry
 from .timeutils import get_timezone, to_rfc3339
 
 log = logging.getLogger(__name__)
+
+
+class SlotCheck(str, Enum):
+    """What the calendar already holds in a proposed event's slot."""
+
+    CLEAR = "clear"
+    DUPLICATE = "duplicate"  # this same event is already there
+    CONFLICT = "conflict"  # something else is there
+
+
+def _normalized_title(title: Optional[str]) -> str:
+    """Case-, whitespace- and trailing-punctuation-insensitive title key."""
+    return " ".join((title or "").split()).casefold().rstrip(" .-–—:")
+
+
+def check_slot(
+    proposed: ProposedEvent, existing_events: Sequence[Dict[str, Any]]
+) -> "tuple[SlotCheck, Optional[Dict[str, Any]]]":
+    """Whether `proposed` can be created, and the event standing in its way.
+
+    Exists because auto-add was idempotent against the DATABASE, not the
+    calendar -- and the calendar is what actually holds the events. Once a
+    record loses its APPROVED status (a wiped database, a reprocess, a
+    re-ingest) the pipeline re-extracts the proposal, creates a second copy,
+    and overwrites `google_event_id`, orphaning the first. Asking the calendar
+    instead makes auto-add idempotent no matter what happens to the database.
+
+    DUPLICATE requires an overlapping slot AND the same normalized title, so a
+    re-extraction whose times shifted slightly is still recognized as the same
+    meeting. Near-identical titles from different threads ("Lot 22B review" vs
+    "Lot 22B technical review") are deliberately NOT matched: guessing two
+    differently-worded meetings are the same risks silently dropping a real
+    one, which is worse than a visible duplicate.
+
+    All-day events are skipped -- they cover a whole day, so treating one as a
+    conflict would block every proposal on that date.
+    """
+    if proposed.start is None or proposed.end is None:
+        return SlotCheck.CLEAR, None
+
+    target = _normalized_title(proposed.title)
+    conflict = None
+    for event in existing_events or []:
+        if event.get("all_day"):
+            continue
+        start, end = event.get("start"), event.get("end")
+        if not isinstance(start, datetime) or not isinstance(end, datetime):
+            continue
+        if not (proposed.start < end and start < proposed.end):
+            continue
+        if _normalized_title(event.get("summary")) == target:
+            # An exact match wins outright: nothing to create.
+            return SlotCheck.DUPLICATE, event
+        # Keep looking -- a duplicate later in the list beats a conflict.
+        conflict = conflict or event
+    if conflict is not None:
+        return SlotCheck.CONFLICT, conflict
+    return SlotCheck.CLEAR, None
 
 
 def _event_body(proposed: ProposedEvent, timezone_name: str) -> dict:
